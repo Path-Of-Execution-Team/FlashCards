@@ -1,0 +1,9 @@
+[submodule "source/FlashCardsGUI"]
+	path = source/FlashCardsGUI
+	url = https://github.com/Path-Of-Execution-Team/FlashCardsGUI
+[submodule "source/FlashCardsBackend"]
+	path = source/FlashCardsBackend
+	url = https://github.com/Path-Of-Execution-Team/FlashCardsBackend
+[submodule "source/FlashCardsHostedServices"]
+	path = source/FlashCardsHostedServices
+	url = https://github.com/Path-Of-Execution-Team/FlashCardsHostedServices
