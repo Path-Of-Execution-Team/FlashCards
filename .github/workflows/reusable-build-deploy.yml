@@ -1,0 +1,245 @@
+name: reusable-build-deploy
+
+on:
+  workflow_call:
+    inputs:
+      lang: { type: string, required: true } # 'java' | 'node'
+      image_name: { type: string, required: true } # ghcr.io/ORG/NAME
+      container_name: { type: string, required: true } # backend | hosted | frontend
+      deployment_dev: { type: string, required: true }
+      deployment_prod: { type: string, required: true }
+      namespace_dev: { type: string, default: "flashcards" }
+      namespace_prod: { type: string, default: "flashcards" }
+      build_context: { type: string, default: "." }
+      dockerfile: { type: string, default: "Dockerfile" }
+      test_command: { type: string, default: "" }
+      node_version: { type: string, default: "20" }
+      java_version: { type: string, default: "21" }
+      deploy_mode: { type: string, default: "direct" } # 'direct' | 'registry'
+      platform: { type: string, default: "linux/amd64" } # zmień na linux/arm64 jeśli VPS ARM
+    secrets: {} # użyj 'secrets: inherit' w wołających workflowach
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.container_name }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        if: inputs.lang == 'java'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: maven
+      - name: Run tests (Java)
+        if: inputs.lang == 'java'
+        run: |
+          cmd='mvn -B -ntp test'
+          if [ -n "${{ inputs.test_command }}" ]; then cmd='${{ inputs.test_command }}'; fi
+          eval "$cmd"
+
+      - name: Setup Node
+        if: inputs.lang == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+      - name: Run tests (Node)
+        if: inputs.lang == 'node'
+        run: |
+          cmd='npm ci && npm test --if-present'
+          if [ -n "${{ inputs.test_command }}" ]; then cmd='${{ inputs.test_command }}'; fi
+          eval "$cmd"
+
+  build:
+    needs: test
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha_short: ${{ steps.vars.outputs.sha_short }}
+      tag: ${{ steps.meta.outputs.tag }}
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+      tar_name: ${{ steps.pkg.outputs.tar_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short=7 $GITHUB_SHA)" >> $GITHUB_OUTPUT
+
+      - name: Compute tag & image ref
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF##*/}" == "dev" ]]; then
+            TAG="dev-${{ steps.vars.outputs.sha_short }}"
+          else
+            TAG="sha-${{ steps.vars.outputs.sha_short }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image_ref=${{ inputs.image_name }}:${TAG}" >> "$GITHUB_OUTPUT"
+
+      # ----- REGISTRY MODE -----
+      - name: Login to GHCR
+        if: inputs.deploy_mode == 'registry'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push (GHCR)
+        if: inputs.deploy_mode == 'registry'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.build_context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          platforms: ${{ inputs.platform }}
+          tags: |
+            ${{ steps.meta.outputs.image_ref }}
+            ${{ inputs.image_name }}:${{ github.ref == 'refs/heads/dev' && 'dev-latest' || 'latest' }}
+
+      # ----- DIRECT MODE (scp + import do containerd) -----
+      - name: Build to TAR (cross-arch friendly)
+        if: inputs.deploy_mode == 'direct'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.build_context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platform }} # np. linux/arm64 na Oracle
+          tags: ${{ steps.meta.outputs.image_ref }}
+          outputs: type=tar,dest=image.tar # zapis do pliku tar
+
+      - name: Name TAR artifact
+        if: inputs.deploy_mode == 'direct'
+        id: pkg
+        run: |
+          safe_name="$(echo '${{ inputs.image_name }}' | tr '/:' '__')_${{ steps.meta.outputs.tag }}.tar"
+          mv image.tar "$safe_name"
+          echo "tar_name=$safe_name" >> $GITHUB_OUTPUT
+
+  deploy-dev:
+    needs: build
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    steps:
+      # ----- REGISTRY -----
+      - name: Rollout (registry)
+        if: inputs.deploy_mode == 'registry'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            IMG="${{ needs.build.outputs.image_ref }}"
+            NS="${{ inputs.namespace_dev }}"
+            kubectl -n "$NS" set image deploy/${{ inputs.deployment_dev }} ${{ inputs.container_name }}="$IMG" --record || true
+            kubectl -n "$NS" rollout status deploy/${{ inputs.deployment_dev }} --timeout=180s
+
+      # ----- DIRECT -----
+      - name: Copy image tar
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: ${{ needs.build.outputs.tar_name }}
+          target: /opt/images/
+
+      - name: Import & rollout (direct)
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            IMG="${{ needs.build.outputs.image_ref }}"
+            TAR="/opt/images/${{ needs.build.outputs.tar_name }}"
+            NS="${{ inputs.namespace_dev }}"
+
+            sudo mkdir -p /opt/images
+            if command -v ctr >/dev/null 2>&1; then
+              sudo ctr -n k8s.io images import --digests --all-platforms "$TAR"
+            elif command -v crictl >/dev/null 2>&1; then
+              sudo crictl --runtime-endpoint unix:///run/k3s/containerd/containerd.sock images import "$TAR"
+            else
+              echo "No containerd client (ctr/crictl) found" >&2; exit 1
+            fi
+
+            kubectl -n "$NS" set image deploy/${{ inputs.deployment_dev }} ${{ inputs.container_name }}="$IMG" --record || true
+            kubectl -n "$NS" rollout status deploy/${{ inputs.deployment_dev }} --timeout=180s
+
+  deploy-prod:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # ----- REGISTRY -----
+      - name: Rollout (registry)
+        if: inputs.deploy_mode == 'registry'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            IMG="${{ needs.build.outputs.image_ref }}"
+            NS="${{ inputs.namespace_prod }}"
+            kubectl -n "$NS" set image deploy/${{ inputs.deployment_prod }} ${{ inputs.container_name }}="$IMG" --record || true
+            kubectl -n "$NS" rollout status deploy/${{ inputs.deployment_prod }} --timeout=180s
+
+      # ----- DIRECT -----
+      - name: Copy image tar
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: ${{ needs.build.outputs.tar_name }}
+          target: /opt/images/
+
+      - name: Import & rollout (direct)
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            IMG="${{ needs.build.outputs.image_ref }}"
+            TAR="/opt/images/${{ needs.build.outputs.tar_name }}"
+            NS="${{ inputs.namespace_prod }}"
+
+            sudo mkdir -p /opt/images
+            if command -v ctr >/dev/null 2>&1; then
+              sudo ctr -n k8s.io images import --digests --all-platforms "$TAR"
+            elif command -v crictl >/dev/null 2>&1; then
+              sudo crictl --runtime-endpoint unix:///run/k3s/containerd/containerd.sock images import "$TAR"
+            else
+              echo "No containerd client (ctr/crictl) found" >&2; exit 1
+            fi
+
+            kubectl -n "$NS" set image deploy/${{ inputs.deployment_prod }} ${{ inputs.container_name }}="$IMG" --record || true
+            kubectl -n "$NS" rollout status deploy/${{ inputs.deployment_prod }} --timeout=180s
