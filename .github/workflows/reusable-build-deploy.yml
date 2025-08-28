@@ -15,7 +15,7 @@ on:
       test_command: { type: string, default: "" }
       node_version: { type: string, default: "20" }
       java_version: { type: string, default: "21" }
-      deploy_mode: { type: string, default: "direct" }
+      deploy_mode: { type: string, default: "direct" }       # 'direct' | 'registry'
       platform: { type: string, default: "linux/arm64" }
     secrets: {}
 
@@ -58,6 +58,7 @@ jobs:
 
   build:
     needs: test
+    # pozwól na build także z workflow_dispatch
     if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
@@ -96,4 +97,193 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: $
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push (GHCR)
+        if: inputs.deploy_mode == 'registry'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.build_context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          platforms: ${{ inputs.platform }}
+          tags: |
+            ${{ steps.meta.outputs.image_ref }}
+            ${{ steps.norm.outputs.image_name_lc }}:${{ github.ref == 'refs/heads/dev' && 'dev-latest' || 'latest' }}
+
+      # ----- DIRECT MODE (scp + import containerd) -----
+      - name: Build to TAR (cross-arch friendly)
+        if: inputs.deploy_mode == 'direct'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.build_context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platform }}
+          tags: ${{ steps.meta.outputs.image_ref }}
+          outputs: type=tar,dest=image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Name TAR artifact
+        if: inputs.deploy_mode == 'direct'
+        id: pkg
+        run: |
+          safe_name="$(echo '${{ steps.norm.outputs.image_name_lc }}' | tr '/:' '__')_${{ steps.meta.outputs.tag }}.tar"
+          mv image.tar "$safe_name"
+          echo "tar_name=$safe_name" >> $GITHUB_OUTPUT
+
+      - name: Upload image tar
+        if: inputs.deploy_mode == 'direct'
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-tar-${{ steps.meta.outputs.tag }}
+          path: ${{ steps.pkg.outputs.tar_name }}
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy-dev:
+    needs: build
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure /opt/images exists
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: sudo mkdir -p /opt/images
+
+      - name: Download image tar
+        if: inputs.deploy_mode == 'direct'
+        uses: actions/download-artifact@v4
+        with:
+          name: image-tar-${{ needs.build.outputs.tag }}
+          path: .
+
+      - name: Copy image tar
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: ${{ needs.build.outputs.tar_name }}
+          target: /opt/images/
+
+      - name: Import & rollout (direct)
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            IMG="${{ needs.build.outputs.image_ref }}"
+            TAR="/opt/images/${{ needs.build.outputs.tar_name }}"
+            NS="${{ inputs.namespace_dev }}"
+
+            if command -v ctr >/dev/null 2>&1; then
+              sudo ctr -n k8s.io images import --digests --all-platforms "$TAR"
+            elif command -v crictl >/dev/null 2>&1; then
+              sudo crictl --runtime-endpoint unix:///run/k3s/containerd/containerd.sock images import "$TAR"
+            else
+              echo "No containerd client (ctr/crictl) found" >&2; exit 1
+            fi
+
+            kubectl -n "$NS" set image deploy/${{ inputs.deployment_dev }} ${{ inputs.container_name }}="$IMG" --record || true
+            kubectl -n "$NS" rollout status deploy/${{ inputs.deployment_dev }} --timeout=180s
+
+      - name: Rollout (registry)
+        if: inputs.deploy_mode == 'registry'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            IMG="${{ needs.build.outputs.image_ref }}"
+            NS="${{ inputs.namespace_dev }}"
+            kubectl -n "$NS" set image deploy/${{ inputs.deployment_dev }} ${{ inputs.container_name }}="$IMG" --record || true
+            kubectl -n "$NS" rollout status deploy/${{ inputs.deployment_dev }} --timeout=180s
+
+  deploy-prod:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure /opt/images exists
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: sudo mkdir -p /opt/images
+
+      - name: Download image tar
+        if: inputs.deploy_mode == 'direct'
+        uses: actions/download-artifact@v4
+        with:
+          name: image-tar-${{ needs.build.outputs.tag }}
+          path: .
+
+      - name: Copy image tar
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: ${{ needs.build.outputs.tar_name }}
+          target: /opt/images/
+
+      - name: Import & rollout (direct)
+        if: inputs.deploy_mode == 'direct'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            IMG="${{ needs.build.outputs.image_ref }}"
+            TAR="/opt/images/${{ needs.build.outputs.tar_name }}"
+            NS="${{ inputs.namespace_prod }}"
+
+            if command -v ctr >/dev/null 2>&1; then
+              sudo ctr -n k8s.io images import --digests --all-platforms "$TAR"
+            elif command -v crictl >/dev/null 2>&1; then
+              sudo crictl --runtime-endpoint unix:///run/k3s/containerd/containerd.sock images import "$TAR"
+            else
+              echo "No containerd client (ctr/crictl) found" >&2; exit 1
+            fi
+
+            kubectl -n "$NS" set image deploy/${{ inputs.deployment_prod }} ${{ inputs.container_name }}="$IMG" --record || true
+            kubectl -n "$NS" rollout status deploy/${{ inputs.deployment_prod }} --timeout=180s
+
+      - name: Rollout (registry)
+        if: inputs.deploy_mode == 'registry'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            IMG="${{ needs.build.outputs.image_ref }}"
+            NS="${{ inputs.namespace_prod }}"
+            kubectl -n "$NS" set image deploy/${{ inputs.deployment_prod }} ${{ inputs.container_name }}="$IMG" --record || true
+            kubectl -n "$NS" rollout status deploy/${{ inputs.deployment_prod }} --timeout=180s
