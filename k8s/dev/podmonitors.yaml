@@ -1,0 +1,31 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flashcards-backend
+  namespace: dev
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: flashcards-backend
+  podMetricsEndpoints:
+    - port: http
+      path: /actuator/prometheus
+      scheme: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flashcards-hosted
+  namespace: dev
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: flashcards-hosted
+  podMetricsEndpoints:
+    - port: http
+      path: /actuator/prometheus
+      scheme: http
