@@ -106,13 +106,21 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-            export KUBECONFIG=/home/${USER}/kubeconfig
-            NAMESPACE="${{ steps.tags.outputs.target_ns }}"
-            DEPLOY="${{ inputs.deployment_name }}"
-            IMAGE="${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.sha_tag }}"
-            echo "Patching $DEPLOY in ns $NAMESPACE to image $IMAGE"
+            KUBECONFIG="/home/${USER}/kubeconfig"
+            NS="${{ steps.tags.outputs.target_ns }}"
+            DEP="${{ inputs.deployment_name }}"
+            IMG="${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.sha_tag }}"
+
+            if sudo kubectl --kubeconfig="$KUBECONFIG" -n "$NS" get deploy "$DEP" \
+              -o jsonpath='{.status.conditions[?(@.type=="Progressing")].reason}' | grep -q ProgressDeadlineExceeded; then
+              echo "Previous rollout failed – restarting $DEP"
+              sudo kubectl --kubeconfig="$KUBECONFIG" -n "$NS" rollout restart deploy/"$DEP"
+            fi
+
+            echo "Patching $DEP in ns $NS to image $IMG"
             CONTAINER="${{ inputs.container_name }}"
-            PAIR="${CONTAINER}=${IMAGE}"
-            sudo kubectl -n "$NAMESPACE" set image deployment/"$DEPLOY" "$PAIR" --record
+            PAIR="${CONTAINER}=${IMG}"
+            sudo kubectl --kubeconfig="$KUBECONFIG" -n "$NS" set image deploy/"$DEP" "$PAIR"
+
             echo "Waiting for rollout..."
-            sudo kubectl -n "$NAMESPACE" rollout status deployment/"$DEPLOY" --timeout=120s
+            sudo kubectl --kubeconfig="$KUBECONFIG" -n "$NS" rollout status deploy/"$DEP" --timeout=10m
