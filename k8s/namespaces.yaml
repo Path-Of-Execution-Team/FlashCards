@@ -1,26 +1,32 @@
 apiVersion: v1
 kind: Namespace
-metadata: { name: dev }
+metadata:
+  name: dev
 ---
 apiVersion: v1
 kind: Namespace
-metadata: { name: prod }
+metadata:
+  name: prod
 ---
 apiVersion: v1
 kind: Namespace
-metadata: { name: db }
+metadata: 
+  name: staging
 ---
 apiVersion: v1
 kind: Namespace
-metadata: { name: kafka }
+metadata:
+  name: test
 ---
 apiVersion: v1
 kind: Namespace
-metadata: { name: monitoring }
+metadata:
+  name: monitoring
 ---
 apiVersion: v1
 kind: Namespace
-metadata: { name: vault }
+metadata:
+  name: logging
 ---
 apiVersion: v1
 kind: LimitRange
@@ -29,8 +35,12 @@ metadata:
   namespace: dev
 spec:
   limits:
-  - default: { cpu: "500m", memory: "512Mi" }
-    defaultRequest: { cpu: "100m", memory: "128Mi" }
+  - default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "150m"
+      memory: "256Mi"
     type: Container
 ---
 apiVersion: v1
@@ -40,6 +50,10 @@ metadata:
   namespace: prod
 spec:
   limits:
-  - default: { cpu: "700m", memory: "768Mi" }
-    defaultRequest: { cpu: "200m", memory: "256Mi" }
+  - default:
+      cpu: "1"
+      memory: "1Gi"
+    defaultRequest:
+      cpu: "200m"
+      memory: "256Mi"
     type: Container

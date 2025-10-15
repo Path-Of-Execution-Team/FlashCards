@@ -6,10 +6,12 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels: {{ app: flashcards-hosted }}
+    matchLabels: 
+      app: flashcards-hosted
   template:
     metadata:
-      labels: {{ app: flashcards-hosted }}
+      labels: 
+        app: flashcards-hosted
       annotations:
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "flashcards-role"
@@ -26,15 +28,31 @@ spec:
       - name: app
         image: ghcr.io/path-of-execution-team/flashcardshosted:prod
         imagePullPolicy: IfNotPresent
-        ports: [ {{name: http, containerPort: 8081}} ]
+        ports: 
+          - name: http
+            containerPort: 8081
         env:
           - name: SPRING_CONFIG_IMPORT
             value: "optional:file:/vault/secrets/app.env"
         resources:
-          requests: {{ cpu: "150m", memory: "256Mi" }}
-          limits:   {{ cpu: "800m", memory: "768Mi" }}
-        readinessProbe: {{ httpGet: {{ path: /actuator/health/readiness, port: 8081 }}, initialDelaySeconds: 10, periodSeconds: 10 }}
-        livenessProbe:  {{ httpGet: {{ path: /actuator/health/liveness,  port: 8081 }}, initialDelaySeconds: 20, periodSeconds: 10 }}
+          requests:
+            cpu: "150m"
+            memory: "256Mi"
+          limits: 
+            cpu: "800m"
+            memory: "768Mi"
+        readinessProbe: 
+          httpGet: 
+            path: /actuator/health/readiness
+            port: 8081
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        livenessProbe: 
+          httpGet: 
+            path: /actuator/health/liveness
+            port: 8081
+          initialDelaySeconds: 20
+          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -42,7 +60,8 @@ metadata:
   name: flashcards-hosted
   namespace: prod
 spec:
-  selector: {{ app: flashcards-hosted }}
+  selector:
+    app: flashcards-hosted
   ports:
     - name: http
       port: 8081
