@@ -90,6 +90,19 @@ services:
     networks:
       - kafka
 
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka-ui
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "local"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+    depends_on:
+      - kafka
+    networks:
+      - kafka
+
   backend:
     build:
       context: ./source/FlashCardsBackend
@@ -148,7 +161,7 @@ services:
       context: ./source/FlashCardsGUI
       dockerfile: Dockerfile.dev
     environment:
-      NEXT_PUBLIC_API_URL: http://backend:8080/api
+      NEXT_PUBLIC_API_URL: backend:8080
       LOKI_PUSH_URL: http://loki:3100/loki/api/v1/push
       APP_NAME: frontend
       METRICS_PREFIX: frontend_

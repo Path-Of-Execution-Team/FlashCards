@@ -1,0 +1,46 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flashcards
+resources:
+  - ../../base
+
+images:
+  - name: flashcards-backend
+    newName: adamcharusta/flashcards-backend
+    newTag: "latest"
+
+  - name: flashcards-hosted
+    newName: adamcharusta/flashcards-hosted
+    newTag: "latest"
+
+  - name: flashcards-frontend
+    newName: adamcharusta/flashcards-frontend
+    newTag: "latest"
+
+  - name: postgres
+    newName: postgres
+    newTag: "16"
+  
+  - name: kafka-ui
+    newName: provectuslabs/kafka-ui
+    newTag: "v0.7.2"
+  
+  - name: kafka
+    newName: apache/kafka
+    newTag: "4.1.1"
+
+  - name: promtail
+    newName: grafana/promtail
+    newTag: "latest"
+  
+  - name: prometheus
+    newName: prom/prometheus
+    newTag: "latest"
+  
+  - name: loki
+    newName: grafana/loki
+    newTag: "2.9.0"
+
+  - name: grafana
+    newName: grafana/grafana
+    newTag: "latest"

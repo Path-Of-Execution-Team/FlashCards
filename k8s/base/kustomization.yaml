@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccounts.yaml
+  - postgres.yaml
+  - kafka.yaml
+  - kafka-ui.yaml
+  - backend.yaml
+  - hosted.yaml
+  - frontend.yaml
+  - prometheus.yaml
+  - loki.yaml
+  - grafana.yaml
+  - promtail.yaml
+  - backend-hpa.yaml
+  - frontend-hpa.yaml
+  - hosted-hpa.yaml

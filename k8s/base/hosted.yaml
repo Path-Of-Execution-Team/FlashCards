@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hosted
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hosted
+  template:
+    metadata:
+      labels:
+        app: hosted
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "flashcards-hosted"
+        vault.hashicorp.com/agent-inject-secret-hosted-config.properties: "secret/data/flashcards/hosted"
+        vault.hashicorp.com/agent-inject-template-hosted-config.properties: |
+          {{- with secret "secret/data/flashcards/hosted" -}}
+          spring.mail.password={{ .Data.data.MAIL_PASSWORD }}
+          {{- end }}
+    spec:
+      serviceAccountName: hosted-sa
+      containers:
+        - name: hosted
+          image: flashcards-hosted
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "300m"
+              memory: "512Mi"
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: SPRING_KAFKA_CONSUMER_GROUP_ID
+              value: "hosted-service-group"
+            - name: SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET
+              value: "earliest"
+            - name: SPRING_KAFKA_PRODUCER_ACKS
+              value: "all"
+            - name: SPRING_MAIL_HOST
+              value: "smtp.example.com"
+            - name: SPRING_MAIL_PORT
+              value: "587"
+            - name: SPRING_MAIL_USERNAME
+              value: "your_username"
+            - name: SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH
+              value: "true"
+            - name: SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE
+              value: "true"
+            - name: LOKI_PUSH_URL
+              value: "http://loki:3100/loki/api/v1/push"
+            - name: SPRING_DOCKER_COMPOSE_ENABLED
+              value: "false"
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+              value: "file:/vault/secrets/hosted-config.properties"
