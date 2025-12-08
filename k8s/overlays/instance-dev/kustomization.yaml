@@ -6,16 +6,16 @@ resources:
 
 images:
   - name: flashcards-backend
-    newName: adamcharusta/flashcards-backend
-    newTag: "2137"
+    newName: pathofexecution/flashcards-backend
+    newTag: "latest"
 
   - name: flashcards-hosted
-    newName: adamcharusta/flashcards-hosted
+    newName: pathofexecution/flashcards-hosted
     newTag: "latest"
 
   - name: flashcards-frontend
-    newName: adamcharusta/flashcards-frontend
-    newTag: "2137"
+    newName: pathofexecution/flashcards-frontend
+    newTag: "latest"
 
   - name: postgres
     newName: postgres
@@ -31,11 +31,11 @@ images:
 
   - name: promtail
     newName: grafana/promtail
-    newTag: "latest"
+    newTag: "main-d7c1e1d"
   
   - name: prometheus
     newName: prom/prometheus
-    newTag: "latest"
+    newTag: "v3.8.0"
   
   - name: loki
     newName: grafana/loki
@@ -43,4 +43,4 @@ images:
 
   - name: grafana
     newName: grafana/grafana
-    newTag: "latest"
+    newTag: "12.1.4"
