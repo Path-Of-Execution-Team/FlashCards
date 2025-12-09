@@ -1,26 +1,43 @@
 apiVersion: v1
-kind: Secret
+kind: ServiceAccount
 metadata:
-  name: postgres-secret
-type: Opaque
-stringData:
-  POSTGRES_PASSWORD: changeMeStrong123
+  name: vault-auth
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-data
+  labels:
+    app: postgres
 spec:
-  accessModes: [ "ReadWriteOnce" ]
+  accessModes: ["ReadWriteOnce"]
   resources:
     requests:
-      storage: 5Gi
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  labels:
+    app: postgres
+spec:
+  clusterIP: None
+  ports:
+    - port: 5432
+      name: postgres
+      targetPort: 5432
+  selector:
+    app: postgres
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: postgres
+  labels:
+    app: postgres
 spec:
+  serviceName: postgres-headless
   replicas: 1
   selector:
     matchLabels:
@@ -29,27 +46,37 @@ spec:
     metadata:
       labels:
         app: postgres
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate-only: "true"
+        vault.hashicorp.com/role: "flashcards-postgres"
+        vault.hashicorp.com/agent-inject-secret-postgres-password.txt: "secret/data/flashcards/backend"
+        vault.hashicorp.com/agent-inject-template-postgres-password.txt: |
+          {{- with secret "secret/data/flashcards/backend" -}}
+          {{ .Data.data.SPRING_DATASOURCE_PASSWORD }}
+          {{- end }}
     spec:
+      serviceAccountName: vault-auth
       containers:
         - name: postgres
-          image: postgres
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: "flashcards_user"
+            - name: POSTGRES_DB
+              value: "flashcards"
+            - name: POSTGRES_PASSWORD_FILE
+              value: "/vault/secrets/postgres-password.txt"
           ports:
             - containerPort: 5432
-          env:
-            - name: POSTGRES_DB
-              value: flashcards
-            - name: POSTGRES_USER
-              value: flashcards_user
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-secret
-                  key: POSTGRES_PASSWORD
+              name: postgres
           volumeMounts:
-            - name: postgres-data
+            - name: data-storage
               mountPath: /var/lib/postgresql/data
       volumes:
-        - name: postgres-data
+        - name: data-storage
           persistentVolumeClaim:
             claimName: postgres-data
 ---
@@ -57,9 +84,14 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-spec:
-  selector:
+  labels:
     app: postgres
+spec:
+  type: ClusterIP
   ports:
     - port: 5432
       targetPort: 5432
+      protocol: TCP
+      name: postgres
+  selector:
+    app: postgres

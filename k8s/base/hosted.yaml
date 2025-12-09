@@ -1,3 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hosted-config
+data:
+  SPRING_MAIL_HOST: "smtp.example.com"
+  SPRING_MAIL_PORT: "587"
+  SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "true"
+  SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "true"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,6 +27,7 @@ spec:
         vault.hashicorp.com/agent-inject-secret-hosted-config.properties: "secret/data/flashcards/hosted"
         vault.hashicorp.com/agent-inject-template-hosted-config.properties: |
           {{- with secret "secret/data/flashcards/hosted" -}}
+          spring.mail.username={{ .Data.data.MAIL_USERNAME }}
           spring.mail.password={{ .Data.data.MAIL_PASSWORD }}
           {{- end }}
     spec:
@@ -43,16 +54,29 @@ spec:
               value: "earliest"
             - name: SPRING_KAFKA_PRODUCER_ACKS
               value: "all"
+
+            # mail config z ConfigMapy
             - name: SPRING_MAIL_HOST
-              value: "smtp.example.com"
+              valueFrom:
+                configMapKeyRef:
+                  name: hosted-config
+                  key: SPRING_MAIL_HOST
             - name: SPRING_MAIL_PORT
-              value: "587"
-            - name: SPRING_MAIL_USERNAME
-              value: "your_username"
+              valueFrom:
+                configMapKeyRef:
+                  name: hosted-config
+                  key: SPRING_MAIL_PORT
             - name: SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH
-              value: "true"
+              valueFrom:
+                configMapKeyRef:
+                  name: hosted-config
+                  key: SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH
             - name: SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE
-              value: "true"
+              valueFrom:
+                configMapKeyRef:
+                  name: hosted-config
+                  key: SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE
+
             - name: LOKI_PUSH_URL
               value: "http://loki:3100/loki/api/v1/push"
             - name: SPRING_DOCKER_COMPOSE_ENABLED

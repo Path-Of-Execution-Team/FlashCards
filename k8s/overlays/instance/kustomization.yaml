@@ -44,3 +44,6 @@ images:
   - name: grafana
     newName: grafana/grafana
     newTag: "12.1.4"
+
+patchesStrategicMerge:
+  - nodeports.yaml

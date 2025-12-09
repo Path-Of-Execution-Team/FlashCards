@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/role: "flashcards-backend-dev"
+        vault.hashicorp.com/agent-inject-secret-backend-config.properties: "secret/data/flashcards-dev/backend"
+        vault.hashicorp.com/agent-inject-template-backend-config.properties: |
+          {{- with secret "secret/data/flashcards-dev/backend" -}}
+          spring.datasource.password={{ .Data.data.SPRING_DATASOURCE_PASSWORD }}
+          jwt.secret={{ .Data.data.JWT_SECRET }}
+          {{- end }}
