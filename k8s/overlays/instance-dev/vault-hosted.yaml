@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: hosted
+spec:
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "flashcards-hosted-dev"
+        vault.hashicorp.com/agent-inject-secret-hosted-config.properties: "kv/data/flashcards-dev/hosted"
+        vault.hashicorp.com/agent-inject-template-hosted-config.properties: |
+          {{- with secret "kv/data/flashcards-dev/hosted" -}}
+          spring.mail.username={{ .Data.data.MAIL_USERNAME }}
+          spring.mail.password={{ .Data.data.MAIL_PASSWORD }}
+          {{- end }}

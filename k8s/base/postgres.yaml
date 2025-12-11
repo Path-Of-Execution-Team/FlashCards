@@ -51,9 +51,9 @@ spec:
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate-only: "true"
         vault.hashicorp.com/role: "flashcards-postgres"
-        vault.hashicorp.com/agent-inject-secret-postgres-password.txt: "secret/data/flashcards/backend"
+        vault.hashicorp.com/agent-inject-secret-postgres-password.txt: "kv/data/flashcards/backend"
         vault.hashicorp.com/agent-inject-template-postgres-password.txt: |
-          {{- with secret "secret/data/flashcards/backend" -}}
+          {{- with secret "kv/data/flashcards/backend" -}}
           {{ .Data.data.SPRING_DATASOURCE_PASSWORD }}
           {{- end }}
     spec:

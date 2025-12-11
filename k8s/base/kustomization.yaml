@@ -4,7 +4,6 @@ resources:
   - serviceaccounts.yaml
   - postgres.yaml
   - kafka.yaml
-  - kafka-ui.yaml
   - backend.yaml
   - hosted.yaml
   - frontend.yaml

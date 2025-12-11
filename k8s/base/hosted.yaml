@@ -9,7 +9,7 @@ data:
   SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "true"
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: hosted
 spec:
@@ -24,9 +24,9 @@ spec:
       annotations:
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "flashcards-hosted"
-        vault.hashicorp.com/agent-inject-secret-hosted-config.properties: "secret/data/flashcards/hosted"
+        vault.hashicorp.com/agent-inject-secret-hosted-config.properties: "kv/data/flashcards/hosted"
         vault.hashicorp.com/agent-inject-template-hosted-config.properties: |
-          {{- with secret "secret/data/flashcards/hosted" -}}
+          {{- with secret "kv/data/flashcards/hosted" -}}
           spring.mail.username={{ .Data.data.MAIL_USERNAME }}
           spring.mail.password={{ .Data.data.MAIL_PASSWORD }}
           {{- end }}
