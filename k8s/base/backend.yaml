@@ -22,6 +22,22 @@ spec:
           {{- end }}
     spec:
       serviceAccountName: backend-sa
+      initContainers:
+        - name: wait-for-vault
+          image: curlimages/curl:8.10.1
+          command:
+            - sh
+            - -c
+          args:
+            - |
+              echo "Czekam na Vault pod http://vault.vault:8200/v1/sys/health..."
+              # sealed=false oznacza, że Vault jest odpieczętowany i gotowy
+              until curl -sf http://vault.vault:8200/v1/sys/health | grep '"sealed":false' >/dev/null; do
+                echo "Vault jeszcze niegotowy, śpię 3s..."
+                sleep 3
+              done
+              echo "Vault gotowy."
+
       containers:
         - name: backend
           image: flashcards-backend
