@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+data:
+  VAULT_BACKEND_ROLE: flashcards-backend
+  VAULT_BACKEND_SECRET_PATH: secret/data/flashcards/backend
+  VAULT_BACKEND_TEMPLATE: |-
+    {{- with secret "secret/data/flashcards/backend" -}}
+    spring.datasource.password={{ .Data.data.SPRING_DATASOURCE_PASSWORD }}
+    jwt.secret={{ .Data.data.JWT_SECRET }}
+    {{- end }}
+  VAULT_HOSTED_ROLE: flashcards-hosted
+  VAULT_HOSTED_SECRET_PATH: secret/data/flashcards/hosted
+  VAULT_HOSTED_TEMPLATE: |-
+    {{- with secret "secret/data/flashcards/hosted" -}}
+    spring.mail.username={{ .Data.data.MAIL_USERNAME }}
+    spring.mail.password={{ .Data.data.MAIL_PASSWORD }}
+    {{- end }}

@@ -1,0 +1,114 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: moomento
+
+resources:
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - vault-config.yaml
+  - backend.yaml
+  - backend-hpa.yaml
+  - frontend.yaml
+  - frontend-hpa.yaml
+  - hosted.yaml
+  - hosted-hpa.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: app-config
+    literals:
+      - NEXT_PUBLIC_API_URL=api.example.com
+      - BACKEND_ALLOWED_ORIGINS=https://app.example.com
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres.postgres.svc.cluster.local:5432/flashcards
+      - SPRING_DATASOURCE_USERNAME=flashcards_user
+      - JWT_EXPIRATION=3600000
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka.kafka.svc.cluster.local:9092
+      - SPRING_KAFKA_CONSUMER_GROUP_ID=flashcards-backend
+      - SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET=earliest
+      - SPRING_KAFKA_PRODUCER_ACKS=all
+      - HOSTED_KAFKA_CONSUMER_GROUP_ID=hosted-service-group
+      - HOSTED_KAFKA_CONSUMER_AUTO_OFFSET_RESET=earliest
+      - APP_KAFKA_DEMO_TOPIC=flashcards-demo-topic
+      - LOKI_PUSH_URL=http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+      - VAULT_ADDR=http://vault.vault:8200
+      - SPRING_MAIL_HOST=smtp.example.com
+      - SPRING_MAIL_PORT=587
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true
+      - METRICS_BUCKETS=50,100,300,1000,2000,3000
+
+images:
+  - name: flashcards-backend
+    newName: ghcr.io/path-of-execution-team/flashcards-backend-dev
+    newTag: latest
+  - name: flashcards-frontend
+    newName: ghcr.io/path-of-execution-team/flashcards-gui-dev
+    newTag: latest
+  - name: flashcards-hosted
+    newName: ghcr.io/path-of-execution-team/flashcards-hosted-dev
+    newTag: latest
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: vault-config
+      fieldPath: data.VAULT_BACKEND_ROLE
+    targets:
+      - select:
+          kind: Deployment
+          name: backend
+        fieldPaths:
+          - spec.template.metadata.annotations.[vault.hashicorp.com/role]
+  - source:
+      kind: ConfigMap
+      name: vault-config
+      fieldPath: data.VAULT_BACKEND_SECRET_PATH
+    targets:
+      - select:
+          kind: Deployment
+          name: backend
+        fieldPaths:
+          - spec.template.metadata.annotations.[vault.hashicorp.com/agent-inject-secret-backend-config.properties]
+  - source:
+      kind: ConfigMap
+      name: vault-config
+      fieldPath: data.VAULT_BACKEND_TEMPLATE
+    targets:
+      - select:
+          kind: Deployment
+          name: backend
+        fieldPaths:
+          - spec.template.metadata.annotations.[vault.hashicorp.com/agent-inject-template-backend-config.properties]
+  - source:
+      kind: ConfigMap
+      name: vault-config
+      fieldPath: data.VAULT_HOSTED_ROLE
+    targets:
+      - select:
+          kind: StatefulSet
+          name: hosted
+        fieldPaths:
+          - spec.template.metadata.annotations.[vault.hashicorp.com/role]
+  - source:
+      kind: ConfigMap
+      name: vault-config
+      fieldPath: data.VAULT_HOSTED_SECRET_PATH
+    targets:
+      - select:
+          kind: StatefulSet
+          name: hosted
+        fieldPaths:
+          - spec.template.metadata.annotations.[vault.hashicorp.com/agent-inject-secret-hosted-config.properties]
+  - source:
+      kind: ConfigMap
+      name: vault-config
+      fieldPath: data.VAULT_HOSTED_TEMPLATE
+    targets:
+      - select:
+          kind: StatefulSet
+          name: hosted
+        fieldPaths:
+          - spec.template.metadata.annotations.[vault.hashicorp.com/agent-inject-template-hosted-config.properties]

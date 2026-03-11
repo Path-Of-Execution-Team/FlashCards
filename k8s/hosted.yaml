@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: hosted
+spec:
+  serviceName: hosted
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hosted
+  template:
+    metadata:
+      labels:
+        app: hosted
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/service: "http://vault.vault.svc:8200"
+        vault.hashicorp.com/role: REPLACE_ME
+        vault.hashicorp.com/agent-inject-secret-hosted-config.properties: REPLACE_ME
+        vault.hashicorp.com/agent-inject-template-hosted-config.properties: REPLACE_ME
+        vault.hashicorp.com/agent-requests-cpu: "50m"
+        vault.hashicorp.com/agent-requests-mem: "64Mi"
+        vault.hashicorp.com/agent-limits-cpu: "150m"
+        vault.hashicorp.com/agent-limits-mem: "128Mi"
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8081"
+    spec:
+      serviceAccountName: hosted-sa
+      initContainers:
+        - name: wait-for-vault
+          image: curlimages/curl:8.10.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: VAULT_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: VAULT_ADDR
+          command:
+            - sh
+            - -c
+          args:
+            - |
+              echo "Waiting for Vault at ${VAULT_ADDR}/v1/sys/health..."
+              until curl -sf "${VAULT_ADDR}/v1/sys/health" | grep '"sealed":false' >/dev/null; do
+                echo "Vault not ready yet, sleeping 3s..."
+                sleep 3
+              done
+              echo "Vault is ready."
+      containers:
+        - name: hosted
+          image: flashcards-hosted
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: 200m
+              memory: 384Mi
+          env:
+            - name: APP_NAME
+              value: hosted
+            - name: SERVER_PORT
+              value: "8081"
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+            - name: SPRING_DOCKER_COMPOSE_ENABLED
+              value: "false"
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+              value: file:/vault/secrets/hosted-config.properties
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_KAFKA_BOOTSTRAP_SERVERS
+            - name: SPRING_KAFKA_CONSUMER_GROUP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: HOSTED_KAFKA_CONSUMER_GROUP_ID
+            - name: SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: HOSTED_KAFKA_CONSUMER_AUTO_OFFSET_RESET
+            - name: SPRING_KAFKA_PRODUCER_ACKS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_KAFKA_PRODUCER_ACKS
+            - name: APP_KAFKA_DEMO_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: APP_KAFKA_DEMO_TOPIC
+            - name: SPRING_MAIL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_MAIL_HOST
+            - name: SPRING_MAIL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_MAIL_PORT
+            - name: SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH
+            - name: SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE
+            - name: LOKI_PUSH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: LOKI_PUSH_URL
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hosted
+spec:
+  type: ClusterIP
+  selector:
+    app: hosted
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
