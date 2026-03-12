@@ -2,6 +2,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: grafana-dashboard-flashcards-overview
+  annotations:
+    grafana_folder: "Dashboards/flashcards"
   labels:
     grafana_dashboard: "1"
     app.kubernetes.io/part-of: flashcards
@@ -89,6 +91,7 @@ data:
             }
           ],
           "title": "Healthy Pods",
+          "description": "Shows how many FlashCards pods have been up recently and are considered healthy by Prometheus.",
           "type": "stat"
         },
         {
@@ -133,6 +136,7 @@ data:
             }
           ],
           "title": "Total Request Rate",
+          "description": "Combined request throughput for backend, hosted services, and frontend metrics.",
           "type": "stat"
         },
         {
@@ -177,6 +181,7 @@ data:
             }
           ],
           "title": "5xx Error Ratio",
+          "description": "Share of server-side errors across the FlashCards application stack.",
           "type": "stat"
         },
         {
@@ -237,6 +242,7 @@ data:
             }
           ],
           "title": "Warn/Error Logs",
+          "description": "Counts recent warning and error log lines coming from Loki for the selected apps.",
           "type": "stat"
         },
         {
@@ -303,6 +309,7 @@ data:
             }
           ],
           "title": "Request Rate by App",
+          "description": "Breaks down traffic per FlashCards component to show where requests are flowing.",
           "type": "timeseries"
         },
         {
@@ -358,6 +365,7 @@ data:
             }
           ],
           "title": "p95 Latency",
+          "description": "95th percentile request latency for backend, hosted services, and frontend.",
           "type": "timeseries"
         },
         {
@@ -413,6 +421,7 @@ data:
             }
           ],
           "title": "5xx Ratio by App",
+          "description": "Compares 5xx error share per FlashCards component.",
           "type": "timeseries"
         },
         {
@@ -453,6 +462,7 @@ data:
             }
           ],
           "title": "Log Throughput by App",
+          "description": "Shows how many log lines each FlashCards component emits over time.",
           "type": "timeseries"
         },
         {
@@ -483,6 +493,7 @@ data:
             }
           ],
           "title": "Application Logs",
+          "description": "Live application log stream from Loki for the selected FlashCards apps.",
           "type": "logs"
         }
       ],
@@ -600,6 +611,7 @@ data:
       },
       "timezone": "",
       "title": "FlashCards Overview",
+      "description": "Main operational overview for FlashCards covering health, traffic, latency, errors, and logs.",
       "uid": "flashcards-overview",
       "version": 1,
       "weekStart": ""

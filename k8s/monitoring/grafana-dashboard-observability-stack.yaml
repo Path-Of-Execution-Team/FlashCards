@@ -2,6 +2,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: grafana-dashboard-observability-stack
+  annotations:
+    grafana_folder: "Dashboards/flashcards"
   labels:
     grafana_dashboard: "1"
     app.kubernetes.io/part-of: flashcards
@@ -88,6 +90,7 @@ data:
             }
           ],
           "title": "Stack Targets Up",
+          "description": "Number of observability targets reporting as up in Prometheus.",
           "type": "stat"
         },
         {
@@ -132,6 +135,7 @@ data:
             }
           ],
           "title": "Loki Ingestion",
+          "description": "Current ingestion rate into Loki in bytes per second.",
           "type": "stat"
         },
         {
@@ -176,6 +180,7 @@ data:
             }
           ],
           "title": "Promtail Read Rate",
+          "description": "Rate at which Promtail reads log lines from sources.",
           "type": "stat"
         },
         {
@@ -236,6 +241,7 @@ data:
             }
           ],
           "title": "Dropped Log Lines",
+          "description": "Log lines dropped by the log collection pipeline.",
           "type": "stat"
         },
         {
@@ -276,6 +282,7 @@ data:
             }
           ],
           "title": "Component Health by Job",
+          "description": "Up/down health state per observability job label.",
           "type": "timeseries"
         },
         {
@@ -324,6 +331,7 @@ data:
             }
           ],
           "title": "Prometheus and Grafana Internals",
+          "description": "Key internal metrics for Prometheus cardinality and Grafana dashboard count.",
           "type": "timeseries"
         },
         {
@@ -372,6 +380,7 @@ data:
             }
           ],
           "title": "Promtail Pipeline Throughput",
+          "description": "Compares Promtail read and sent rates across the log pipeline.",
           "type": "timeseries"
         },
         {
@@ -427,6 +436,7 @@ data:
             }
           ],
           "title": "Control Plane Latency",
+          "description": "p95 latency for Promtail, Loki, and Grafana request handling.",
           "type": "timeseries"
         }
       ],
@@ -479,6 +489,7 @@ data:
       },
       "timezone": "",
       "title": "Observability Stack Overview",
+      "description": "Health and performance dashboard for Prometheus, Loki, Grafana, and log collection components.",
       "uid": "observability-stack-overview",
       "version": 2,
       "weekStart": ""
