@@ -25,6 +25,7 @@ This deployment does not provision those components. It only consumes them.
 - `backend-hpa.yaml`, `frontend-hpa.yaml`, `hosted-hpa.yaml` - autoscaling
 - `vault-config.yaml` - Vault role names and secret paths injected into pod annotations
 - `backend-nodeport.yaml` - optional public NodePort for backend / Swagger
+- `monitoring/` - dashboards and PodMonitor manifests specific to this application
 - `caddy/Caddyfile.example` - example Caddy configuration
 - `vault/bootstrap-vault.example.sh` - example Vault bootstrap script
 
@@ -205,6 +206,28 @@ Optional public backend / Swagger exposure:
 kubectl apply -f backend-nodeport.yaml -n moomento
 ```
 
+Optional monitoring stack:
+```bash
+kubectl create namespace monitoring
+kubectl create secret generic grafana-admin-credentials -n monitoring \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password='REPLACE_ME_STRONG_PASSWORD'
+helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f monitoring/kube-prometheus-stack.values.yaml
+helm upgrade --install loki grafana/loki -n monitoring -f monitoring/loki.values.yaml
+helm upgrade --install alloy-logs grafana/alloy -n monitoring -f monitoring/alloy-logs.values.yaml
+kubectl apply -k monitoring
+```
+
+Legacy collector instead of Alloy:
+```bash
+helm upgrade --install promtail grafana/promtail -n monitoring -f monitoring/promtail.values.yaml
+```
+
+Optional FlashCards-specific dashboards and PodMonitors:
+```bash
+kubectl apply -k monitoring/flashcards
+```
+
 ## Post-Deploy Verification
 
 Basic checks:
@@ -249,6 +272,7 @@ Adjust them for your environment:
 Typical mapping:
 - frontend -> `127.0.0.1:30002`
 - backend / Swagger -> `127.0.0.1:30003`
+- grafana -> `127.0.0.1:32000`
 
 ## Sensitive Data Policy
 

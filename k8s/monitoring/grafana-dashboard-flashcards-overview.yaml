@@ -1,0 +1,606 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-flashcards-overview
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: flashcards
+data:
+  flashcards-overview.json: |-
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "datasource": "${prometheus_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "green",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name"
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(max_over_time(up{namespace=\"$namespace\", pod=~\"$pod_filter\"}[5m]))",
+              "legendFormat": "Healthy pods",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Healthy Pods",
+          "type": "stat"
+        },
+        {
+          "datasource": "${prometheus_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 0
+          },
+          "id": 2,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name"
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"(backend|hosted).*\", uri!~\"/actuator.*\"}[5m])) + sum(rate(frontend_requests_total{path!=\"/metrics\"}[5m]))",
+              "legendFormat": "RPS",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Total Request Rate",
+          "type": "stat"
+        },
+        {
+          "datasource": "${prometheus_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 0
+          },
+          "id": 3,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name"
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "(sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"(backend|hosted).*\", status=~\"5..\"}[5m])) + sum(rate(frontend_errors_total{status=~\"5..\"}[5m]))) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"(backend|hosted).*\"}[5m])) + sum(rate(frontend_requests_total[5m])), 0.001)",
+              "legendFormat": "5xx share",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "5xx Error Ratio",
+          "type": "stat"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 0
+          },
+          "id": 4,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name"
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(count_over_time({app=~\"$log_apps\", level=~\"ERROR|error|WARN|warn\"}[5m]))",
+              "legendFormat": "Noisy log lines / 5m",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Warn/Error Logs",
+          "type": "stat"
+        },
+        {
+          "datasource": "${prometheus_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 16,
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
+              },
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 4
+          },
+          "id": 5,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"backend.*\", uri!~\"/actuator.*\"}[5m]))",
+              "legendFormat": "backend",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"hosted.*\", uri!~\"/actuator.*\"}[5m]))",
+              "legendFormat": "hosted",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(frontend_requests_total{path!=\"/metrics\"}[5m]))",
+              "legendFormat": "frontend",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Request Rate by App",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "${prometheus_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 4
+          },
+          "id": 6,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{namespace=\"$namespace\", pod=~\"backend.*\", uri!~\"/actuator.*\"}[5m])))",
+              "legendFormat": "backend p95",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{namespace=\"$namespace\", pod=~\"hosted.*\", uri!~\"/actuator.*\"}[5m])))",
+              "legendFormat": "hosted p95",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(frontend_request_duration_ms_bucket[5m]))) / 1000",
+              "legendFormat": "frontend p95",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "p95 Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "${prometheus_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 12
+          },
+          "id": 7,
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"backend.*\", status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"backend.*\"}[5m])), 0.001)",
+              "legendFormat": "backend",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"hosted.*\", status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\", pod=~\"hosted.*\"}[5m])), 0.001)",
+              "legendFormat": "hosted",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(frontend_errors_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(frontend_requests_total[5m])), 0.001)",
+              "legendFormat": "frontend",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "5xx Ratio by App",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 12
+          },
+          "id": 8,
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum by (app) (count_over_time({app=~\"$log_apps\"}[5m]))",
+              "legendFormat": "{{app}}",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Log Throughput by App",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 20
+          },
+          "id": 9,
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "prettifyLogMessage": false,
+            "showCommonLabels": false,
+            "showLabels": true,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "{app=~\"$log_apps\"} |= \"$search\"",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Application Logs",
+          "type": "logs"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": [
+        "flashcards",
+        "prometheus",
+        "loki"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {
+              "selected": true,
+              "text": "Prometheus",
+              "value": "Prometheus"
+            },
+            "label": "Prometheus",
+            "name": "prometheus_ds",
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "Loki",
+              "value": "Loki"
+            },
+            "label": "Loki",
+            "name": "loki_ds",
+            "query": "loki",
+            "refresh": 1,
+            "type": "datasource"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "moomento",
+              "value": "moomento"
+            },
+            "label": "Namespace",
+            "name": "namespace",
+            "options": [
+              {
+                "selected": true,
+                "text": "moomento",
+                "value": "moomento"
+              }
+            ],
+            "query": "moomento",
+            "type": "textbox"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "(backend|frontend|hosted).*",
+              "value": "(backend|frontend|hosted).*"
+            },
+            "label": "Pod regex",
+            "name": "pod_filter",
+            "options": [
+              {
+                "selected": true,
+                "text": "(backend|frontend|hosted).*",
+                "value": "(backend|frontend|hosted).*"
+              }
+            ],
+            "query": "(backend|frontend|hosted).*",
+            "type": "textbox"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "FlashCardsBackend|FlashCardsHostedServices|frontend",
+              "value": "FlashCardsBackend|FlashCardsHostedServices|frontend"
+            },
+            "label": "Log apps",
+            "name": "log_apps",
+            "options": [
+              {
+                "selected": true,
+                "text": "FlashCardsBackend|FlashCardsHostedServices|frontend",
+                "value": "FlashCardsBackend|FlashCardsHostedServices|frontend"
+              }
+            ],
+            "query": "FlashCardsBackend|FlashCardsHostedServices|frontend",
+            "type": "textbox"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "",
+              "value": ""
+            },
+            "label": "Search",
+            "name": "search",
+            "options": [
+              {
+                "selected": true,
+                "text": "",
+                "value": ""
+              }
+            ],
+            "query": "",
+            "type": "textbox"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timezone": "",
+      "title": "FlashCards Overview",
+      "uid": "flashcards-overview",
+      "version": 1,
+      "weekStart": ""
+    }

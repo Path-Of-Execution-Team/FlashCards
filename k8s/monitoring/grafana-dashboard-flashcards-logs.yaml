@@ -1,0 +1,482 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-flashcards-logs
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: flashcards
+data:
+  flashcards-logs.json: |-
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": "${loki_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 8,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name"
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(count_over_time({app=~\"$app\"}[5m]))",
+              "legendFormat": "lines / 5m",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Total Log Volume",
+          "type": "stat"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 10
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 8,
+            "x": 8,
+            "y": 0
+          },
+          "id": 2,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name"
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(count_over_time({app=~\"$app\", level=~\"ERROR|error\"}[5m]))",
+              "legendFormat": "errors / 5m",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Error Volume",
+          "type": "stat"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 10
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 8,
+            "x": 16,
+            "y": 0
+          },
+          "id": 3,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name"
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum(count_over_time({app=~\"$app\", level=~\"WARN|warn\"}[5m]))",
+              "legendFormat": "warn / 5m",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Warning Volume",
+          "type": "stat"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 5
+          },
+          "id": 4,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum by (app) (count_over_time({app=~\"$app\"}[5m]))",
+              "legendFormat": "{{app}}",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Log Rate by App",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 5
+          },
+          "id": 5,
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum by (level) (count_over_time({app=~\"$app\", level=~\"$level\"}[5m]))",
+              "legendFormat": "{{level}}",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Log Rate by Level",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 13
+          },
+          "id": 6,
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "prettifyLogMessage": false,
+            "showCommonLabels": false,
+            "showLabels": true,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "{app=~\"$app\", level=~\"$level\"} |= \"$contains\"",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Filtered Logs",
+          "type": "logs"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 25
+          },
+          "id": 7,
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "sum by (path) (count_over_time({app=\"frontend\"} | json | __error__=\"\" | path!=\"\" [5m]))",
+              "legendFormat": "{{path}}",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Frontend Problem Reports by Path",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "${loki_ds}",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 25
+          },
+          "id": 8,
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "prettifyLogMessage": false,
+            "showCommonLabels": false,
+            "showLabels": true,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "{app=\"frontend\"} | json | __error__=\"\" | path=~\"$frontend_path\"",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Frontend Problem Reports",
+          "type": "logs"
+        }
+      ],
+      "refresh": "15s",
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": [
+        "flashcards",
+        "logs",
+        "loki"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {
+              "selected": true,
+              "text": "Loki",
+              "value": "Loki"
+            },
+            "label": "Loki",
+            "name": "loki_ds",
+            "query": "loki",
+            "refresh": 1,
+            "type": "datasource"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "FlashCardsBackend|FlashCardsHostedServices|frontend",
+              "value": "FlashCardsBackend|FlashCardsHostedServices|frontend"
+            },
+            "label": "App",
+            "name": "app",
+            "options": [
+              {
+                "selected": true,
+                "text": "FlashCardsBackend|FlashCardsHostedServices|frontend",
+                "value": "FlashCardsBackend|FlashCardsHostedServices|frontend"
+              }
+            ],
+            "query": "FlashCardsBackend|FlashCardsHostedServices|frontend",
+            "type": "textbox"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": ".*",
+              "value": ".*"
+            },
+            "label": "Level regex",
+            "name": "level",
+            "options": [
+              {
+                "selected": true,
+                "text": ".*",
+                "value": ".*"
+              }
+            ],
+            "query": ".*",
+            "type": "textbox"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "",
+              "value": ""
+            },
+            "label": "Contains",
+            "name": "contains",
+            "options": [
+              {
+                "selected": true,
+                "text": "",
+                "value": ""
+              }
+            ],
+            "query": "",
+            "type": "textbox"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": ".*",
+              "value": ".*"
+            },
+            "label": "Frontend path",
+            "name": "frontend_path",
+            "options": [
+              {
+                "selected": true,
+                "text": ".*",
+                "value": ".*"
+              }
+            ],
+            "query": ".*",
+            "type": "textbox"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-2h",
+        "to": "now"
+      },
+      "timezone": "",
+      "title": "FlashCards Logs",
+      "uid": "flashcards-logs",
+      "version": 1,
+      "weekStart": ""
+    }
