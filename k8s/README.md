@@ -214,18 +214,13 @@ kubectl create secret generic grafana-admin-credentials -n monitoring \
   --from-literal=admin-password='REPLACE_ME_STRONG_PASSWORD'
 helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f monitoring/kube-prometheus-stack.values.yaml
 helm upgrade --install loki grafana/loki -n monitoring -f monitoring/loki.values.yaml
-helm upgrade --install alloy-logs grafana/alloy -n monitoring -f monitoring/alloy-logs.values.yaml
-kubectl apply -k monitoring
-```
-
-Legacy collector instead of Alloy:
-```bash
 helm upgrade --install promtail grafana/promtail -n monitoring -f monitoring/promtail.values.yaml
+kubectl apply -k monitoring
 ```
 
 Optional FlashCards-specific dashboards and PodMonitors:
 ```bash
-kubectl apply -k monitoring/flashcards
+kubectl apply -k monitoring
 ```
 
 ## Post-Deploy Verification

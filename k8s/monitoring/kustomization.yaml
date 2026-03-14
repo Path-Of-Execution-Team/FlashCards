@@ -4,10 +4,7 @@ kind: Kustomization
 namespace: monitoring
 
 resources:
-  - grafana-dashboard-flashcards-overview.yaml
-  - grafana-dashboard-flashcards-logs.yaml
-  - grafana-dashboard-jvm-services.yaml
-  - grafana-dashboard-observability-stack.yaml
   - podmonitor-backend.yaml
   - podmonitor-frontend.yaml
   - podmonitor-hosted.yaml
+  - dashboards/flashcards
