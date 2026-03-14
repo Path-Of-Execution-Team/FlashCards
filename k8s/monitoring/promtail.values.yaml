@@ -1,6 +1,38 @@
 config:
+  logLevel: info
   clients:
     - url: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+  snippets:
+    pipelineStages:
+      - cri: {}
+      - json:
+          expressions:
+            app: app
+            service_name: service_name
+            env: env
+            namespace: namespace
+            pod: pod
+            node: node
+            level: level
+            message: message
+            logger: logger
+      - regex:
+          source: output
+          expression: '(?i)\b(?P<text_level>trace|debug|info|warn|warning|error|fatal)\b'
+      - template:
+          source: level
+          template: '{{- if .Value -}}{{ ToLower .Value }}{{- else if .text_level -}}{{ ToLower .text_level }}{{- else if eq .stream "stderr" -}}error{{- else -}}info{{- end -}}'
+      - template:
+          source: level
+          template: '{{- if eq .Value "warning" -}}warn{{- else if eq .Value "fatal" -}}error{{- else -}}{{ .Value }}{{- end -}}'
+      - labels:
+          app:
+          service_name:
+          env:
+          namespace:
+          pod:
+          node:
+          level:
 
 serviceMonitor:
   enabled: true

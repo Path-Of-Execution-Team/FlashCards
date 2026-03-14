@@ -218,6 +218,16 @@ helm upgrade --install promtail grafana/promtail -n monitoring -f monitoring/pro
 kubectl apply -k monitoring
 ```
 
+Promtail is configured to normalize log levels from two sources:
+- application JSON logs emitted by backend, hosted, and frontend server handlers
+- plain text framework logs such as Next.js / Node.js runtime output
+
+The pipeline first parses JSON `level` fields, then falls back to regex detection for text logs, and finally defaults to:
+- `error` for `stderr`
+- `info` for `stdout`
+
+This avoids Grafana showing `detected_level=unknown` for common framework logs that do not emit structured level fields.
+
 Optional FlashCards-specific dashboards and PodMonitors:
 ```bash
 kubectl apply -k monitoring

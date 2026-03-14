@@ -42,7 +42,6 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./source/FlashCardsBackend/grafana/provisioning:/etc/grafana/provisioning
-      - ./k8s/monitoring/dashboards/flashcards:/var/lib/grafana/dashboards/flashcards
     depends_on:
       - prometheus
       - loki
