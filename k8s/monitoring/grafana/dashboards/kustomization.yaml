@@ -4,7 +4,4 @@ kind: Kustomization
 namespace: monitoring
 
 resources:
-  - podmonitor-backend.yaml
-  - podmonitor-frontend.yaml
-  - podmonitor-hosted.yaml
-  - grafana
+  - flashcards

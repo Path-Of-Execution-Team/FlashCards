@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: flashcards
+    app.kubernetes.io/component: grafana-dashboards
+    flashcards.moomento.pl/dashboard-group: frontend
+  annotations:
+    grafana_folder: /tmp/dashboards/flashcards/frontend
+
+configMapGenerator:
+  - name: flashcards-frontend-health-dashboard
+    files:
+      - frontend-health-dashboard.json
+  - name: flashcards-frontend-logs-dashboard
+    files:
+      - frontend-logs-dashboard.json

@@ -1,0 +1,759 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.4.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "2.48.0"
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Przekrojowy widok calego systemu: frontend, backend i hosted. Dashboard laczy stan workloadow, HPA, zasoby, restarty i podstawowe metryki ruchu.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Szybki stan",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "max(kube_deployment_status_replicas_available{namespace=~\"${namespace:raw}\", deployment=\"frontend\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Frontend ready",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "max(kube_deployment_status_replicas_available{namespace=~\"${namespace:raw}\", deployment=\"backend\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Backend ready",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "max(kube_statefulset_status_replicas_ready{namespace=~\"${namespace:raw}\", statefulset=\"hosted\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Hosted ready",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"${namespace:raw}\", container=~\"frontend|backend|hosted\"}[$__range]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Total restarts",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 1
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"${namespace:raw}\", container=~\"frontend|backend|hosted\", image!=\"\"}[5m]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Total CPU",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 1
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"${namespace:raw}\", container=~\"frontend|backend|hosted\", image!=\"\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Total memory",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 1
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(frontend_errors_total{namespace=~\"${namespace:raw}\"}[5m])) / clamp_min(sum(rate(frontend_requests_total{namespace=~\"${namespace:raw}\"}[5m])), 0.001)",
+          "refId": "A"
+        }
+      ],
+      "title": "Frontend error rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(http_server_requests_seconds_count{namespace=~\"${namespace:raw}\", pod=~\"backend-.*\", uri!~\"/actuator.*\", status=~\"4..|5..\"}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace=~\"${namespace:raw}\", pod=~\"backend-.*\", uri!~\"/actuator.*\"}[5m])), 0.001)",
+          "refId": "A"
+        }
+      ],
+      "title": "Backend error rate",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Skalowanie i workloady",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max(kube_deployment_status_replicas_available{namespace=~\"${namespace:raw}\", deployment=\"frontend\"})",
+          "legendFormat": "frontend ready",
+          "refId": "A"
+        },
+        {
+          "expr": "max(kube_deployment_status_replicas_available{namespace=~\"${namespace:raw}\", deployment=\"backend\"})",
+          "legendFormat": "backend ready",
+          "refId": "B"
+        },
+        {
+          "expr": "max(kube_statefulset_status_replicas_ready{namespace=~\"${namespace:raw}\", statefulset=\"hosted\"})",
+          "legendFormat": "hosted ready",
+          "refId": "C"
+        },
+        {
+          "expr": "max(kube_deployment_spec_replicas{namespace=~\"${namespace:raw}\", deployment=\"frontend\"})",
+          "legendFormat": "frontend desired",
+          "refId": "D"
+        },
+        {
+          "expr": "max(kube_deployment_spec_replicas{namespace=~\"${namespace:raw}\", deployment=\"backend\"})",
+          "legendFormat": "backend desired",
+          "refId": "E"
+        },
+        {
+          "expr": "max(kube_statefulset_replicas{namespace=~\"${namespace:raw}\", statefulset=\"hosted\"})",
+          "legendFormat": "hosted desired",
+          "refId": "F"
+        }
+      ],
+      "title": "Workload replicas",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max(kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"${namespace:raw}\", horizontalpodautoscaler=\"frontend-hpa\"})",
+          "legendFormat": "frontend current",
+          "refId": "A"
+        },
+        {
+          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"${namespace:raw}\", horizontalpodautoscaler=\"frontend-hpa\"})",
+          "legendFormat": "frontend desired",
+          "refId": "B"
+        },
+        {
+          "expr": "max(kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"${namespace:raw}\", horizontalpodautoscaler=\"backend-hpa\"})",
+          "legendFormat": "backend current",
+          "refId": "C"
+        },
+        {
+          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"${namespace:raw}\", horizontalpodautoscaler=\"backend-hpa\"})",
+          "legendFormat": "backend desired",
+          "refId": "D"
+        },
+        {
+          "expr": "max(kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"${namespace:raw}\", horizontalpodautoscaler=\"hosted-hpa\"})",
+          "legendFormat": "hosted current",
+          "refId": "E"
+        },
+        {
+          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"${namespace:raw}\", horizontalpodautoscaler=\"hosted-hpa\"})",
+          "legendFormat": "hosted desired",
+          "refId": "F"
+        }
+      ],
+      "title": "HPA overview",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 20,
+      "panels": [],
+      "title": "Zasoby i ruch",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"${namespace:raw}\", container=\"frontend\", image!=\"\"}[5m]))",
+          "legendFormat": "frontend cpu",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"${namespace:raw}\", container=\"backend\", image!=\"\"}[5m]))",
+          "legendFormat": "backend cpu",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"${namespace:raw}\", container=\"hosted\", image!=\"\"}[5m]))",
+          "legendFormat": "hosted cpu",
+          "refId": "C"
+        }
+      ],
+      "title": "CPU by app",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"${namespace:raw}\", container=\"frontend\", image!=\"\"})",
+          "legendFormat": "frontend memory",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"${namespace:raw}\", container=\"backend\", image!=\"\"})",
+          "legendFormat": "backend memory",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"${namespace:raw}\", container=\"hosted\", image!=\"\"})",
+          "legendFormat": "hosted memory",
+          "refId": "C"
+        }
+      ],
+      "title": "Memory by app",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "id": 23,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(frontend_requests_total{namespace=~\"${namespace:raw}\"}[5m]))",
+          "legendFormat": "frontend requests/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(http_server_requests_seconds_count{namespace=~\"${namespace:raw}\", pod=~\"backend-.*\", uri!~\"/actuator.*\"}[5m]))",
+          "legendFormat": "backend requests/s",
+          "refId": "B"
+        }
+      ],
+      "title": "Traffic overview",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=~\"${namespace:raw}\", container=~\"frontend|backend|hosted\"}[$__rate_interval]))",
+          "legendFormat": "{{container}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Restarts by app",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "flashcards",
+    "overview",
+    "kubernetes",
+    "prometheus"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "moomento",
+          "value": "moomento"
+        },
+        "hide": 2,
+        "label": "Namespace",
+        "name": "namespace",
+        "query": "moomento",
+        "skipUrlSync": false,
+        "type": "constant"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "FlashCards System Overview",
+  "uid": "flashcards-system-overview",
+  "version": 1,
+  "weekStart": ""
+}

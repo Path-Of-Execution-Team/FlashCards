@@ -10,11 +10,51 @@ grafana:
   sidecar:
     dashboards:
       enabled: true
+      SCProvider: false
       label: grafana_dashboard
       labelValue: "1"
+      folder: /tmp/dashboards
+      folderAnnotation: grafana_folder
       searchNamespace: ALL
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: flashcards-shared
+          orgId: 1
+          folder: FlashCards
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /tmp/dashboards/flashcards/shared
+        - name: flashcards-frontend
+          orgId: 1
+          folder: FlashCards Frontend
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /tmp/dashboards/flashcards/frontend
+        - name: flashcards-backend
+          orgId: 1
+          folder: FlashCards Backend
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /tmp/dashboards/flashcards/backend
+        - name: flashcards-hosted
+          orgId: 1
+          folder: FlashCards Hosted
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /tmp/dashboards/flashcards/hosted
   additionalDataSources:
     - name: Loki
+      uid: loki
       type: loki
       access: proxy
       url: http://loki.monitoring.svc.cluster.local:3100
