@@ -1,3 +1,6 @@
+# Default Promtail values for clusters where Promtail is the only pod log collector.
+# If the cluster already runs Alloy or Grafana Agent for pod logs, apply
+# promtail.values.exclude-moomento.yaml as an additional Helm values file.
 config:
   logLevel: info
   clients:

@@ -1,0 +1,10 @@
+# Use this override when the cluster already runs Alloy or Grafana Agent
+# collecting pod logs into Loki. It drops application pods from namespace
+# "moomento" to prevent duplicate ingestion by Promtail and the existing collector.
+config:
+  snippets:
+    extraRelabelConfigs:
+      - action: drop
+        source_labels:
+          - __meta_kubernetes_namespace
+        regex: moomento

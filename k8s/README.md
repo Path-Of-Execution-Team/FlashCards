@@ -218,6 +218,15 @@ helm upgrade --install promtail grafana/promtail -n monitoring -f monitoring/pro
 kubectl apply -k monitoring
 ```
 
+If the cluster already runs Alloy or Grafana Agent and those collectors already
+ship pod logs to Loki, install Promtail with the override below to avoid
+duplicate log streams for the `moomento` namespace:
+```bash
+helm upgrade --install promtail grafana/promtail -n monitoring \
+  -f monitoring/promtail.values.yaml \
+  -f monitoring/promtail.values.exclude-moomento.yaml
+```
+
 Promtail is configured to normalize log levels from two sources:
 - application JSON logs emitted by backend, hosted, and frontend server handlers
 - plain text framework logs such as Next.js / Node.js runtime output
