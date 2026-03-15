@@ -227,6 +227,14 @@ helm upgrade --install promtail grafana/promtail -n monitoring \
   -f monitoring/promtail.values.exclude-moomento.yaml
 ```
 
+If the cluster uses Alloy for pod log collection, keep its pipeline aligned with
+the Grafana dashboards by deploying the values file below. It adds the `level`
+label for both JSON application logs and plain-text framework logs:
+```bash
+helm upgrade --install alloy-logs grafana/alloy -n monitoring \
+  -f monitoring/alloy-logs.values.yaml
+```
+
 Promtail is configured to normalize log levels from two sources:
 - application JSON logs emitted by backend, hosted, and frontend server handlers
 - plain text framework logs such as Next.js / Node.js runtime output

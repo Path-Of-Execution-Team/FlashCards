@@ -1,0 +1,99 @@
+fullnameOverride: alloy-logs
+
+controller:
+  type: daemonset
+
+alloy:
+  configMap:
+    content: |-
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_label_app"]
+          regex         = "^;*([^;]+).*$"
+          target_label  = "app"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node_name"
+        }
+      }
+
+      loki.source.kubernetes "pod_logs" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.process.pod_logs.receiver]
+      }
+
+      loki.process "pod_logs" {
+        // Extract a structured level when the application emits JSON logs.
+        stage.json {
+          expressions = { "level" = "level" }
+        }
+
+        // Fall back to plain-text framework logs such as Next.js or JVM output.
+        stage.regex {
+          expression = "(?i)\\b(?P<text_level>trace|debug|info|warn|warning|error|fatal)\\b"
+        }
+
+        stage.template {
+          source   = "level"
+          template = "{{`{{- if .level -}}{{ ToLower .level }}{{- else if .text_level -}}{{ ToLower .text_level }}{{- else -}}undefined{{- end -}}`}}"
+        }
+
+        stage.template {
+          source   = "level"
+          template = "{{`{{- if eq .level \"warning\" -}}warn{{- else if eq .level \"fatal\" -}}error{{- else -}}{{ .level }}{{- end -}}`}}"
+        }
+
+        stage.labels {
+          values = { "level" = "" }
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+
+        external_labels = {
+          cluster   = "vps-k3s",
+          collector = "alloy",
+        }
+      }
+  mounts:
+    dockercontainers: false
+    varlog: false
+  resources:
+    limits:
+      cpu: 300m
+      memory: 384Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+serviceMonitor:
+  enabled: true
+  additionalLabels: {}
