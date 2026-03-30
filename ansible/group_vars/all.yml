@@ -1,0 +1,34 @@
+preflight_sudo_groups:
+  - sudo
+  - wheel
+  - admin
+
+preflight_core_tools:
+  - name: Docker
+    binaries:
+      - docker
+  - name: Kubernetes CLI
+    binaries:
+      - kubectl
+  - name: Helm
+    binaries:
+      - helm
+
+preflight_application_dependencies:
+  - name: PostgreSQL
+    binaries:
+      - psql
+      - postgres
+  - name: Grafana
+    binaries:
+      - grafana-server
+      - grafana-cli
+  - name: Promtail
+    binaries:
+      - promtail
+  - name: Loki
+    binaries:
+      - loki
+  - name: Prometheus
+    binaries:
+      - prometheus

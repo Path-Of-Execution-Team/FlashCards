@@ -1,9 +1,0 @@
-app.example.com {
-    encode gzip zstd
-    reverse_proxy http://127.0.0.1:30002
-}
-
-api.example.com {
-    encode gzip zstd
-    reverse_proxy http://127.0.0.1:30003
-}

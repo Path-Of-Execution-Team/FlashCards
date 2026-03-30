@@ -85,11 +85,10 @@ kind: Service
 metadata:
   name: frontend
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: frontend
   ports:
     - name: http
       port: 3000
       targetPort: 3000
-      nodePort: 30002

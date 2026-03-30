@@ -19,14 +19,13 @@ This deployment does not provision those components. It only consumes them.
 - `kustomization.yaml` - entrypoint for deployment and environment values
 - `namespace.yaml` - target namespace
 - `serviceaccounts.yaml` - dedicated service accounts for application workloads
-- `backend.yaml` - backend deployment and service
-- `frontend.yaml` - frontend deployment and NodePort service
+- `backend.yaml` - backend deployment and internal service
+- `frontend.yaml` - frontend deployment and internal service
 - `hosted.yaml` - hosted/background service StatefulSet and service
+- `ingress.yaml` - public entrypoint routing frontend and API traffic
 - `backend-hpa.yaml`, `frontend-hpa.yaml`, `hosted-hpa.yaml` - autoscaling
 - `vault-config.yaml` - Vault role names and secret paths injected into pod annotations
-- `backend-nodeport.yaml` - optional public NodePort for backend / Swagger
 - `monitoring/` - dashboards and PodMonitor manifests specific to this application
-- `caddy/Caddyfile.example` - example Caddy configuration
 - `vault/bootstrap-vault.example.sh` - example Vault bootstrap script
 
 ## Target Model
@@ -35,7 +34,7 @@ This deployment does not provision those components. It only consumes them.
 - no overlays
 - external infrastructure dependencies
 - Vault Agent Injector for secrets delivery
-- Caddy in front of NodePort services
+- Ingress in front of ClusterIP services
 
 ## Prerequisites
 
@@ -51,13 +50,15 @@ The cluster must have:
 Recommended operational prerequisites:
 - `metrics-server` if HPA is enabled
 - DNS records for public frontend / API hosts
-- a reverse proxy such as Caddy or another ingress layer
+- a working Ingress controller in the cluster
 
 ## Configuration Model
 
 Non-secret runtime configuration is defined in `kustomization.yaml` via `configMapGenerator`.
 
 Typical values to adjust:
+- `INGRESS_APP_HOST`
+- `INGRESS_API_HOST`
 - `NEXT_PUBLIC_API_URL`
 - `BACKEND_ALLOWED_ORIGINS`
 - `SPRING_DATASOURCE_URL`
@@ -68,6 +69,11 @@ Typical values to adjust:
 - `SPRING_MAIL_HOST`
 - `SPRING_MAIL_PORT`
 - image names and tags
+
+Ingress hostnames are defined in `kustomization.yaml` and injected into `ingress.yaml`.
+These values should stay aligned with:
+- `NEXT_PUBLIC_API_URL`
+- `BACKEND_ALLOWED_ORIGINS`
 
 Secret values are not stored in this repository.
 
@@ -201,10 +207,13 @@ From this directory:
 kubectl apply -k .
 ```
 
-Optional public backend / Swagger exposure:
-```bash
-kubectl apply -f backend-nodeport.yaml -n moomento
-```
+Public application exposure:
+The default deployment already exposes:
+- `INGRESS_APP_HOST` -> `frontend` service
+- `INGRESS_API_HOST` -> `backend` service
+
+If your cluster does not define a default ingress class, add `spec.ingressClassName`
+to `ingress.yaml` before applying manifests.
 
 Optional monitoring stack:
 ```bash
@@ -276,25 +285,27 @@ kubectl logs -n moomento -l app=hosted -c hosted --tail=200
 
 ## Runtime Notes
 
-- `frontend` is exposed as a NodePort service
-- `backend` is internal by default; `backend-nodeport.yaml` exposes it publicly
+- `frontend` is exposed through the `flashcards` Ingress
+- `backend` is exposed through the `flashcards` Ingress on the API host
 - `hosted` is modeled as a StatefulSet
 - `backend` uses a `startupProbe` because application boot can take longer than a standard health probe window
 - resource requests for `backend`, `hosted`, and Vault Agent have been reduced to fit smaller single-node clusters
 
-## Caddy
+## Ingress
 
-The `caddy/` directory contains example Caddyfiles.
+The default public routing is:
+- `INGRESS_APP_HOST` -> `frontend:3000`
+- `INGRESS_API_HOST` -> `backend:8080`
 
-Adjust them for your environment:
+Adjust for your environment:
 - public hostnames
 - TLS strategy
-- local NodePort targets
+- ingress class
+- DNS records pointing at the ingress controller
 
-Typical mapping:
-- frontend -> `127.0.0.1:30002`
-- backend / Swagger -> `127.0.0.1:30003`
-- grafana -> `127.0.0.1:32000`
+Grafana in `monitoring/kube-prometheus-stack.values.yaml` still uses a `NodePort`
+by default because it is an operational/admin endpoint and not part of the main
+application ingress.
 
 ## Sensitive Data Policy
 

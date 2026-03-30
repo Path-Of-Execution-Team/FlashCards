@@ -13,6 +13,7 @@ resources:
   - frontend-hpa.yaml
   - hosted.yaml
   - hosted-hpa.yaml
+  - ingress.yaml
 
 generatorOptions:
   disableNameSuffixHash: true
@@ -20,6 +21,8 @@ generatorOptions:
 configMapGenerator:
   - name: app-config
     literals:
+      - INGRESS_APP_HOST=app.example.com
+      - INGRESS_API_HOST=api.example.com
       - NEXT_PUBLIC_API_URL=api.example.com
       - BACKEND_ALLOWED_ORIGINS=https://app.example.com
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres.postgres.svc.cluster.local:5432/flashcards
@@ -112,3 +115,23 @@ replacements:
           name: hosted
         fieldPaths:
           - spec.template.metadata.annotations.[vault.hashicorp.com/agent-inject-template-hosted-config.properties]
+  - source:
+      kind: ConfigMap
+      name: app-config
+      fieldPath: data.INGRESS_APP_HOST
+    targets:
+      - select:
+          kind: Ingress
+          name: flashcards
+        fieldPaths:
+          - spec.rules.0.host
+  - source:
+      kind: ConfigMap
+      name: app-config
+      fieldPath: data.INGRESS_API_HOST
+    targets:
+      - select:
+          kind: Ingress
+          name: flashcards
+        fieldPaths:
+          - spec.rules.1.host

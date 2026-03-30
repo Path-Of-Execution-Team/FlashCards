@@ -1,0 +1,143 @@
+---
+- name: FlashCards host preflight
+  hosts: flashcards_hosts
+  gather_facts: true
+
+  tasks:
+    - name: Read current user groups
+      ansible.builtin.command: id -Gn
+      register: preflight_user_groups_cmd
+      changed_when: false
+
+    - name: Check whether sudo binary is available
+      ansible.builtin.command: sh -lc "command -v sudo"
+      register: preflight_sudo_binary_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: Check passwordless sudo for the current user
+      ansible.builtin.command: sudo -n true
+      register: preflight_sudo_noninteractive_cmd
+      changed_when: false
+      failed_when: false
+      when:
+        - ansible_user_id != 'root'
+        - preflight_sudo_binary_cmd.rc == 0
+
+    - name: Compute sudo access summary
+      ansible.builtin.set_fact:
+        preflight_user_groups: "{{ preflight_user_groups_cmd.stdout.split() }}"
+        preflight_has_sudo_group: "{{ (preflight_user_groups_cmd.stdout.split() | intersect(preflight_sudo_groups) | length) > 0 }}"
+        preflight_has_passwordless_sudo: >-
+          {{
+            ansible_user_id == 'root'
+            or (
+              preflight_sudo_noninteractive_cmd is defined
+              and preflight_sudo_noninteractive_cmd.rc == 0
+            )
+          }}
+        preflight_has_sudo_access: >-
+          {{
+            ansible_user_id == 'root'
+            or (
+              preflight_sudo_binary_cmd.rc == 0
+              and (
+                (preflight_user_groups_cmd.stdout.split() | intersect(preflight_sudo_groups) | length) > 0
+                or (
+                  preflight_sudo_noninteractive_cmd is defined
+                  and preflight_sudo_noninteractive_cmd.rc == 0
+                )
+              )
+            )
+          }}
+
+    - name: Check core tooling binaries
+      ansible.builtin.shell: |
+        for binary in {{ item.binaries | join(' ') }}; do
+          if command -v "$binary" >/dev/null 2>&1; then
+            command -v "$binary"
+            exit 0
+          fi
+        done
+        exit 1
+      args:
+        executable: /bin/sh
+      loop: "{{ preflight_core_tools }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: preflight_core_tool_checks
+      changed_when: false
+      failed_when: false
+
+    - name: Check application dependency binaries
+      ansible.builtin.shell: |
+        for binary in {{ item.binaries | join(' ') }}; do
+          if command -v "$binary" >/dev/null 2>&1; then
+            command -v "$binary"
+            exit 0
+          fi
+        done
+        exit 1
+      args:
+        executable: /bin/sh
+      loop: "{{ preflight_application_dependencies }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: preflight_application_dependency_checks
+      changed_when: false
+      failed_when: false
+
+    - name: Build missing prerequisites lists
+      ansible.builtin.set_fact:
+        preflight_missing_core_tools: >-
+          {{
+            preflight_core_tool_checks.results
+            | rejectattr('rc', 'equalto', 0)
+            | map(attribute='item.name')
+            | list
+          }}
+        preflight_missing_application_dependencies: >-
+          {{
+            preflight_application_dependency_checks.results
+            | rejectattr('rc', 'equalto', 0)
+            | map(attribute='item.name')
+            | list
+          }}
+
+    - name: Print preflight summary
+      ansible.builtin.debug:
+        msg: |
+          Host: {{ inventory_hostname }}
+          User: {{ ansible_user_id }}
+          Groups: {{ preflight_user_groups | join(', ') }}
+          Sudo access: {{ 'OK' if preflight_has_sudo_access else 'MISSING' }}
+          Passwordless sudo: {{ 'YES' if preflight_has_passwordless_sudo else 'NO' }}
+
+          Core tools:
+          {% for result in preflight_core_tool_checks.results %}
+          - {{ result.item.name }}: {{ 'OK (' ~ result.stdout ~ ')' if result.rc == 0 else 'MISSING' }}
+          {% endfor %}
+
+          Application dependencies:
+          {% for result in preflight_application_dependency_checks.results %}
+          - {{ result.item.name }}: {{ 'OK (' ~ result.stdout ~ ')' if result.rc == 0 else 'MISSING' }}
+          {% endfor %}
+
+    - name: Fail when host prerequisites are missing
+      ansible.builtin.assert:
+        that:
+          - preflight_has_sudo_access
+          - preflight_missing_core_tools | length == 0
+          - preflight_missing_application_dependencies | length == 0
+        fail_msg: >-
+          Preflight failed on {{ inventory_hostname }}.
+          Missing core tools: {{
+            preflight_missing_core_tools | join(', ')
+            if preflight_missing_core_tools | length > 0 else 'none'
+          }}.
+          Missing application dependencies: {{
+            preflight_missing_application_dependencies | join(', ')
+            if preflight_missing_application_dependencies | length > 0 else 'none'
+          }}.
+          Sudo access: {{ 'OK' if preflight_has_sudo_access else 'MISSING' }}.
+        success_msg: "Preflight passed on {{ inventory_hostname }}."
