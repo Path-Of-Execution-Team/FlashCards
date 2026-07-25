@@ -1,0 +1,18 @@
+target_environment: develop
+app_namespace: moomento-dev
+public_host: dev.moomento.pl
+node_min_memory_mb: 3000
+
+postgres_storage_size: 8Gi
+kafka_storage_size: 6Gi
+vault_data_storage_size: 4Gi
+vault_audit_storage_enabled: false
+
+# Local/manual develop bootstrap can initialise and unseal Vault from the
+# root-owned file kept on the node. CI overrides these to false unless the
+# workflow is explicitly started with vault_bootstrap=true.
+vault_initialize: true
+vault_unseal_from_node_file: true
+vault_configure_kubernetes_auth: true
+vault_key_shares: 1
+vault_key_threshold: 1

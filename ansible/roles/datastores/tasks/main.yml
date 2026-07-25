@@ -1,0 +1,69 @@
+- name: Create PostgreSQL namespace
+  ansible.builtin.shell: kubectl create namespace {{ postgres_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+
+- name: Check PostgreSQL superuser secret
+  ansible.builtin.command: kubectl -n {{ postgres_namespace }} get secret {{ postgres_superuser_secret }}
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: postgres_secret
+  failed_when: false
+  changed_when: false
+
+- name: Create PostgreSQL superuser secret once
+  ansible.builtin.shell: |
+    set -euo pipefail
+    kubectl -n {{ postgres_namespace }} create secret generic {{ postgres_superuser_secret }} \
+      --from-literal=password="$(openssl rand -base64 24)"
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  no_log: true
+  when: postgres_secret.rc != 0
+
+- name: Render PostgreSQL manifest
+  ansible.builtin.template:
+    src: postgresql.yaml.j2
+    dest: "{{ provision_remote_dir }}/postgresql.yaml"
+    mode: "0600"
+
+- name: Apply PostgreSQL manifest
+  ansible.builtin.command: kubectl apply -f {{ provision_remote_dir }}/postgresql.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+
+- name: Create Kafka namespace
+  ansible.builtin.shell: kubectl create namespace {{ kafka_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+
+- name: Render Kafka manifest
+  ansible.builtin.template:
+    src: kafka.yaml.j2
+    dest: "{{ provision_remote_dir }}/kafka.yaml"
+    mode: "0600"
+
+- name: Apply Kafka manifest
+  ansible.builtin.command: kubectl apply -f {{ provision_remote_dir }}/kafka.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+
+- name: Wait for PostgreSQL
+  ansible.builtin.command: kubectl -n {{ postgres_namespace }} rollout status statefulset/postgresql --timeout=300s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+
+- name: Wait for Kafka
+  ansible.builtin.command: kubectl -n {{ kafka_namespace }} rollout status statefulset/kafka --timeout=300s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false

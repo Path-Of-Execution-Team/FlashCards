@@ -1,0 +1,18 @@
+target_environment: production
+app_namespace: moomento
+public_host: moomento.pl
+node_min_memory_mb: 7000
+
+postgres_storage_size: 20Gi
+kafka_storage_size: 12Gi
+vault_data_storage_size: 10Gi
+vault_audit_storage_enabled: true
+vault_audit_storage_size: 5Gi
+
+# Production Vault must be initialised and unsealed by an operator. The CI
+# provisioning run only verifies that it is reachable and unsealed.
+vault_initialize: false
+vault_unseal_from_node_file: false
+vault_configure_kubernetes_auth: false
+vault_key_shares: 5
+vault_key_threshold: 3

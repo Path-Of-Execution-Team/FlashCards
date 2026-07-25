@@ -1,0 +1,60 @@
+k3s_version: v1.36.2+k3s1
+traefik_chart_version: 41.0.2
+cert_manager_chart_version: v1.21.0
+vault_chart_version: 0.34.0
+
+postgres_image: postgres:18.3-bookworm
+kafka_image: apache/kafka:4.3.1
+kafka_cluster_id: MkU3OEVBNTcwNTJENDM2Qk
+
+acme_email: admin@bosman.top
+cluster_issuer_name: letsencrypt-production
+provision_remote_dir: /tmp/flashcards-ansible
+kubeconfig_path: "{{ ansible_env.HOME }}/.kube/config"
+node_min_memory_mb: 3000
+
+app_namespace: moomento
+
+traefik_namespace: traefik
+traefik_replicas: 1
+traefik_request_cpu: 25m
+traefik_request_memory: 48Mi
+traefik_limit_cpu: 300m
+traefik_limit_memory: 256Mi
+
+cert_manager_namespace: cert-manager
+cert_manager_request_cpu: 10m
+cert_manager_request_memory: 32Mi
+cert_manager_cainjector_request_memory: 48Mi
+
+vault_namespace: vault
+vault_data_storage_size: 10Gi
+vault_audit_storage_enabled: false
+vault_audit_storage_size: 5Gi
+vault_key_shares: 1
+vault_key_threshold: 1
+vault_initialize: false
+vault_unseal_from_node_file: false
+vault_configure_kubernetes_auth: false
+vault_required_unsealed: true
+
+postgres_namespace: database
+postgres_service_name: postgresql
+postgres_superuser_secret: postgresql-superuser
+postgres_storage_size: 20Gi
+postgres_request_cpu: 100m
+postgres_request_memory: 192Mi
+postgres_limit_cpu: "1"
+postgres_limit_memory: 768Mi
+
+kafka_namespace: kafka
+kafka_service_name: kafka
+kafka_storage_size: 12Gi
+kafka_request_cpu: 100m
+kafka_request_memory: 384Mi
+kafka_limit_cpu: "1"
+kafka_limit_memory: 640Mi
+kafka_heap_opts: -Xms256m -Xmx256m
+kafka_log_retention_hours: "24"
+kafka_log_retention_bytes: "1073741824"
+kafka_log_segment_bytes: "134217728"

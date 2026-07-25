@@ -1,0 +1,46 @@
+global:
+  enabled: true
+  tlsDisable: true
+injector:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+server:
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        address = "0.0.0.0:8200"
+        cluster_address = "0.0.0.0:8201"
+        tls_disable = 1
+      }
+
+      storage "file" {
+        path = "/vault/data"
+      }
+  dataStorage:
+    enabled: true
+    size: {{ vault_data_storage_size }}
+    storageClass: local-path
+  auditStorage:
+    enabled: {{ vault_audit_storage_enabled | bool | ternary('true', 'false') }}
+    size: {{ vault_audit_storage_size }}
+    storageClass: local-path
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+ui:
+  enabled: true
+  serviceType: ClusterIP

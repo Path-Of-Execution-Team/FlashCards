@@ -1,0 +1,7 @@
+- name: Ensure application namespace exists
+  ansible.builtin.shell: kubectl create namespace {{ app_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false

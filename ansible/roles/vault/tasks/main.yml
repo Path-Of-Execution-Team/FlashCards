@@ -1,0 +1,126 @@
+- name: Render Vault values
+  ansible.builtin.template:
+    src: vault-values.yaml.j2
+    dest: "{{ provision_remote_dir }}/vault-values.yaml"
+    mode: "0600"
+
+- name: Install or upgrade Vault
+  ansible.builtin.command: >
+    helm upgrade --install vault hashicorp/vault
+    --namespace {{ vault_namespace }} --create-namespace
+    --version {{ vault_chart_version }}
+    --timeout 10m
+    -f {{ provision_remote_dir }}/vault-values.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+
+- name: Wait for vault-0 to exist
+  ansible.builtin.command: kubectl -n {{ vault_namespace }} get pod vault-0
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: vault_pod
+  retries: 60
+  delay: 5
+  until: vault_pod.rc == 0
+  changed_when: false
+
+- name: Check whether Vault init output exists on the node
+  ansible.builtin.stat:
+    path: /root/vault-init.json
+  become: true
+  register: vault_init_file
+
+- name: Initialise Vault on first bootstrap
+  ansible.builtin.shell: |
+    set -euo pipefail
+    kubectl -n {{ vault_namespace }} exec vault-0 -- vault operator init \
+      -key-shares={{ vault_key_shares }} \
+      -key-threshold={{ vault_key_threshold }} \
+      -format=json | tee /root/vault-init.json >/dev/null
+    chmod 600 /root/vault-init.json
+  args:
+    executable: /bin/bash
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  no_log: true
+  when:
+    - vault_initialize | bool
+    - not vault_init_file.stat.exists
+
+- name: Re-read Vault init output state
+  ansible.builtin.stat:
+    path: /root/vault-init.json
+  become: true
+  register: vault_init_file
+
+- name: Read Vault sealed status
+  ansible.builtin.shell: |
+    set -o pipefail
+    kubectl -n {{ vault_namespace }} exec vault-0 -- vault status -format=json 2>/dev/null \
+      | grep -o '"sealed": *[a-z]*' | awk '{print $2}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: vault_sealed_status
+  failed_when: false
+  changed_when: false
+
+- name: Unseal Vault from the node-owned init file
+  ansible.builtin.shell: |
+    set -euo pipefail
+    grep -o '"unseal_keys_b64":\["[^"]*' /root/vault-init.json \
+      | sed 's/.*\["//' \
+      | kubectl -n {{ vault_namespace }} exec -i vault-0 -- vault operator unseal - >/dev/null
+  args:
+    executable: /bin/bash
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  no_log: true
+  when:
+    - vault_unseal_from_node_file | bool
+    - vault_sealed_status.stdout | default("true") != "false"
+    - vault_init_file.stat.exists
+
+- name: Configure Vault kv-v2 and Kubernetes auth
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      token="$(grep -o '"root_token":"[^"]*' /root/vault-init.json | cut -d'"' -f4)"
+
+      if ! kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${token}" \
+        vault secrets list -format=json | grep -q '"secret/"'; then
+        kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${token}" \
+          vault secrets enable -path=secret -version=2 kv
+      fi
+
+      if ! kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${token}" \
+        vault auth list -format=json | grep -q '"kubernetes/"'; then
+        kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${token}" \
+          vault auth enable kubernetes
+        kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${token}" sh -c \
+          'vault write auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443" token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+      fi
+  args:
+    executable: /bin/bash
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  no_log: true
+  when:
+    - vault_configure_kubernetes_auth | bool
+    - vault_init_file.stat.exists
+
+- name: Verify Vault is unsealed
+  ansible.builtin.shell: |
+    set -o pipefail
+    kubectl -n {{ vault_namespace }} exec vault-0 -- vault status -format=json \
+      | grep -q '"sealed": *false'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+  when: vault_required_unsealed | bool

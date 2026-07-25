@@ -273,7 +273,7 @@ run_vault() {
   # is read from root-owned storage and passed as an env var, not an argument.
   local token
   token=$(sudo grep -o '"root_token":"[^"]*' /root/vault-init.json | cut -d'"' -f4)
-  kubectl -n vault exec -i -e "VAULT_TOKEN=${token}" vault-0 -- "$@"
+  kubectl -n vault exec -i vault-0 -- env "VAULT_TOKEN=${token}" "$@"
 }
 
 if run_vault vault secrets list -format=json | grep -q '"secret/"'; then

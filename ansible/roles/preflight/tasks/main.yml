@@ -1,0 +1,35 @@
+- name: Refuse to run as root over SSH
+  ansible.builtin.assert:
+    that:
+      - ansible_user_uid | int != 0
+    fail_msg: "Connect as a normal sudo-capable user, not root."
+
+- name: Check memory budget
+  ansible.builtin.assert:
+    that:
+      - ansible_memtotal_mb | int >= node_min_memory_mb | int
+    fail_msg: "Only {{ ansible_memtotal_mb }}Mi RAM; {{ node_min_memory_mb }}Mi is the minimum for this environment."
+
+- name: Check swap is disabled
+  ansible.builtin.assert:
+    that:
+      - ansible_swaptotal_mb | int == 0
+    fail_msg: "Swap is enabled. Disable it before running k3s."
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - openssl
+      - python3
+      - tar
+    state: present
+    update_cache: true
+  become: true
+
+- name: Create remote working directory
+  ansible.builtin.file:
+    path: "{{ provision_remote_dir }}"
+    state: directory
+    mode: "0700"

@@ -23,11 +23,11 @@ The two namespaces differ on purpose. A develop manifest applied to the
 production cluster by mistake creates `moomento-dev` rather than overwriting
 production workloads.
 
-Nothing here provisions PostgreSQL, Kafka, Vault or the monitoring stack on
-**production** — those are shared infrastructure this deployment only consumes.
-On **develop** the same dependencies are installed by
-[`provision/provision-dev-node.sh`](provision/provision-dev-node.sh), because
-that node started out empty.
+Shared infrastructure is converged by
+[`../ansible`](../ansible): k3s, Traefik, cert-manager, Vault, PostgreSQL, Kafka
+and the application namespace. The old
+[`provision/provision-dev-node.sh`](provision/provision-dev-node.sh) script is
+kept as a readable legacy fallback for the develop node.
 
 ## Layout
 
@@ -126,6 +126,7 @@ source/FlashCards*  ──────────────────►  d
                                                                             ▼
 FlashCards (root)   ──────────────────►  deploy.yml  ◄── push to main/develop
                      push to develop      ├─ resolve  branch → environment + tags
+                                          ├─ provision Ansible over SSH
                                           ├─ render   kustomize + kubeconform + GHCR check
                                           └─ deploy   ssh → kubectl apply --server-side
 ```
@@ -275,20 +276,24 @@ kubectl create secret docker-registry ghcr-pull -n moomento \
 
 ### Develop (`57.128.251.9`)
 
-The node started empty — no k3s, no kubectl, no docker. Everything comes from one
-script:
+The node started empty — no k3s, no kubectl, no docker. Bootstrap it with the
+Ansible playbook:
 
 ```bash
-scp k8s/provision/provision-dev-node.sh ovh2:
-ssh ovh2 'bash provision-dev-node.sh'
+python -m pip install -r ansible/requirements.txt
+ansible-playbook -i ansible/inventory.example.yml ansible/playbooks/provision.yml \
+  --limit develop \
+  -e vault_initialize=true \
+  -e vault_unseal_from_node_file=true \
+  -e vault_configure_kubernetes_auth=true
 ```
 
 It installs k3s (Traefik from Helm, not the bundled manifest), cert-manager with
 a `letsencrypt-production` ClusterIssuer, Vault in standalone mode with the Agent
 Injector, and a dedicated in-cluster PostgreSQL and single-node KRaft Kafka. It
-is idempotent — re-running it skips whatever is already there.
+is idempotent — re-running it skips or reconciles whatever is already there.
 
-The script generates the PostgreSQL superuser password and the Vault unseal key
+The playbook generates the PostgreSQL superuser password and the Vault unseal key
 **on the node**. Nothing is printed and nothing is written into this repository;
 Vault's init output lands in `/root/vault-init.json` mode 0600. Copy it into a
 password manager and shred it.

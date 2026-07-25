@@ -153,13 +153,28 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
+  # Converges the target node before app manifests are rendered and applied.
+  # The called workflow runs in safe CI mode: it verifies Vault is unsealed but
+  # does not initialise or unseal it unless manually started with that input.
+  # ---------------------------------------------------------------------------
+  provision:
+    name: Provision target infrastructure
+    needs: resolve
+    uses: ./.github/workflows/provision.yml
+    with:
+      environment: ${{ needs.resolve.outputs.environment }}
+      ref: ${{ needs.resolve.outputs.ref }}
+      vault_bootstrap: false
+    secrets: inherit
+
+  # ---------------------------------------------------------------------------
   # Renders the overlay and schema-checks it. No cluster and no credentials are
   # involved, so a broken manifest fails here rather than half-way through a
   # rollout.
   # ---------------------------------------------------------------------------
   render:
     name: Render and validate manifests
-    needs: resolve
+    needs: [resolve, provision]
     runs-on: ubuntu-latest
     steps:
       # Same ref the tags were derived from, so the overlay and the image tags

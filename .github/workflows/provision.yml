@@ -1,0 +1,108 @@
+name: Provision infrastructure
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: string
+      ref:
+        description: Git ref containing the Ansible playbooks
+        required: false
+        type: string
+      vault_bootstrap:
+        description: Allow first-time Vault init/unseal from /root/vault-init.json
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [develop, production]
+      ref:
+        description: Git ref containing the Ansible playbooks
+        required: false
+        type: string
+      vault_bootstrap:
+        description: Allow first-time Vault init/unseal from /root/vault-init.json
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: provision-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    name: Provision ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Ansible
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r ansible/requirements.txt
+          ansible --version
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${SSH_PRIVATE_KEY:?repository secret SSH_PRIVATE_KEY is not set}"
+          : "${SSH_KNOWN_HOSTS:?repository variable SSH_KNOWN_HOSTS is not set}"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Build Ansible inventory
+        env:
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?environment variable SSH_HOST is not set}"
+          : "${SSH_USER:?environment variable SSH_USER is not set}"
+          cat > inventory.ci.yml <<YAML
+          all:
+            children:
+              ${{ inputs.environment }}:
+                hosts:
+                  target:
+                    ansible_host: ${SSH_HOST}
+                    ansible_user: ${SSH_USER}
+                    ansible_ssh_private_key_file: ~/.ssh/id_deploy
+                    ansible_python_interpreter: /usr/bin/python3
+          YAML
+
+      - name: Run Ansible
+        env:
+          ANSIBLE_CONFIG: ansible/ansible.cfg
+          ANSIBLE_HOST_KEY_CHECKING: "True"
+        run: |
+          set -euo pipefail
+          ansible-playbook \
+            -i inventory.ci.yml \
+            ansible/playbooks/provision.yml \
+            -e "target_environment=${{ inputs.environment }}" \
+            -e "vault_initialize=${{ inputs.vault_bootstrap }}" \
+            -e "vault_unseal_from_node_file=${{ inputs.vault_bootstrap }}" \
+            -e "vault_configure_kubernetes_auth=${{ inputs.vault_bootstrap }}"

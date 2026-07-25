@@ -1,0 +1,49 @@
+- name: Read SSH user's primary group
+  ansible.builtin.command: id -gn
+  register: primary_group
+  changed_when: false
+
+- name: Check if k3s is installed
+  ansible.builtin.shell: command -v k3s
+  args:
+    executable: /bin/bash
+  register: k3s_check
+  failed_when: false
+  changed_when: false
+
+- name: Install k3s without bundled Traefik
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -sfL https://get.k3s.io | \
+      INSTALL_K3S_VERSION="{{ k3s_version }}" \
+      INSTALL_K3S_EXEC="server --disable=traefik --write-kubeconfig-mode=640 --write-kubeconfig-group={{ primary_group.stdout }}" \
+      sh -
+  args:
+    executable: /bin/bash
+  become: true
+  when: k3s_check.rc != 0
+
+- name: Ensure k3s is running
+  ansible.builtin.systemd:
+    name: k3s
+    state: started
+    enabled: true
+  become: true
+
+- name: Create kubeconfig directory
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.kube"
+    state: directory
+    mode: "0700"
+
+- name: Copy kubeconfig for the SSH user
+  ansible.builtin.command:
+    cmd: install -m 600 -o {{ ansible_user_uid }} -g {{ ansible_user_gid }} /etc/rancher/k3s/k3s.yaml {{ kubeconfig_path }}
+  become: true
+  changed_when: false
+
+- name: Wait for the node to be Ready
+  ansible.builtin.command: kubectl wait --for=condition=Ready node --all --timeout=300s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false

@@ -1,0 +1,12 @@
+all:
+  children:
+    production:
+      hosts:
+        ovh:
+          ansible_host: 57.129.66.163
+          ansible_user: ubuntu
+    develop:
+      hosts:
+        ovh2:
+          ansible_host: 57.128.251.9
+          ansible_user: ubuntu

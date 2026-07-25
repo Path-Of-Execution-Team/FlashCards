@@ -1,0 +1,26 @@
+- name: Render cert-manager values
+  ansible.builtin.template:
+    src: cert-manager-values.yaml.j2
+    dest: "{{ provision_remote_dir }}/cert-manager-values.yaml"
+    mode: "0600"
+
+- name: Install or upgrade cert-manager
+  ansible.builtin.command: >
+    helm upgrade --install cert-manager jetstack/cert-manager
+    --namespace {{ cert_manager_namespace }} --create-namespace
+    --version {{ cert_manager_chart_version }}
+    --wait --timeout 10m
+    -f {{ provision_remote_dir }}/cert-manager-values.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+
+- name: Render ClusterIssuer
+  ansible.builtin.template:
+    src: clusterissuer.yaml.j2
+    dest: "{{ provision_remote_dir }}/clusterissuer.yaml"
+    mode: "0600"
+
+- name: Apply ClusterIssuer
+  ansible.builtin.command: kubectl apply -f {{ provision_remote_dir }}/clusterissuer.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"

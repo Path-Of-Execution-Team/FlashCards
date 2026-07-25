@@ -1,0 +1,30 @@
+- name: Check if Helm is installed
+  ansible.builtin.shell: command -v helm
+  args:
+    executable: /bin/bash
+  register: helm_check
+  failed_when: false
+  changed_when: false
+
+- name: Install Helm
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    executable: /bin/bash
+  become: true
+  when: helm_check.rc != 0
+
+- name: Add Helm repositories
+  ansible.builtin.shell: helm repo add {{ item.name }} {{ item.url }} >/dev/null 2>&1 || true
+  args:
+    executable: /bin/bash
+  loop:
+    - { name: traefik, url: "https://traefik.github.io/charts" }
+    - { name: jetstack, url: "https://charts.jetstack.io" }
+    - { name: hashicorp, url: "https://helm.releases.hashicorp.com" }
+  changed_when: false
+
+- name: Update Helm repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false

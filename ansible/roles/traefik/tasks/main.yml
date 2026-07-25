@@ -1,0 +1,15 @@
+- name: Render Traefik values
+  ansible.builtin.template:
+    src: traefik-values.yaml.j2
+    dest: "{{ provision_remote_dir }}/traefik-values.yaml"
+    mode: "0600"
+
+- name: Install or upgrade Traefik
+  ansible.builtin.command: >
+    helm upgrade --install traefik traefik/traefik
+    --namespace {{ traefik_namespace }} --create-namespace
+    --version {{ traefik_chart_version }}
+    --wait --timeout 10m
+    -f {{ provision_remote_dir }}/traefik-values.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"

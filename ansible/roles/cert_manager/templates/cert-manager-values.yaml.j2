@@ -1,0 +1,16 @@
+crds:
+  enabled: true
+resources:
+  requests:
+    cpu: {{ cert_manager_request_cpu }}
+    memory: {{ cert_manager_request_memory }}
+webhook:
+  resources:
+    requests:
+      cpu: {{ cert_manager_request_cpu }}
+      memory: {{ cert_manager_request_memory }}
+cainjector:
+  resources:
+    requests:
+      cpu: {{ cert_manager_request_cpu }}
+      memory: {{ cert_manager_cainjector_request_memory }}

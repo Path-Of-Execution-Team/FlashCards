@@ -177,7 +177,9 @@ Remaining manual steps
      moomento.pl      A  $PROD_HOST
      dev.moomento.pl  A  $DEV_HOST
 2. Provision the develop node:
-     scp k8s/provision/provision-dev-node.sh ovh2: && ssh ovh2 'bash provision-dev-node.sh'
+     python -m pip install -r ansible/requirements.txt
+     ansible-playbook -i ansible/inventory.example.yml ansible/playbooks/provision.yml --limit develop \
+       -e vault_initialize=true -e vault_unseal_from_node_file=true -e vault_configure_kubernetes_auth=true
 3. Create the develop branch in this repository - deploy.yml checks it out for
    every develop deploy:
      git switch -c develop && git push -u origin develop
