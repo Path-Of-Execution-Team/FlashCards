@@ -27,6 +27,11 @@ on:
         description: "Branch, tag or SHA to deploy (default: branch selected in the workflow UI)"
         required: false
         type: string
+      deploy_services:
+        description: "Services to deploy: all or comma-separated backend,frontend,hosted"
+        required: false
+        default: all
+        type: string
       backend_tag:
         description: "Override backend tag (default: from submodule pointer)"
         required: false
@@ -41,6 +46,10 @@ on:
         type: string
   repository_dispatch:
     types: [image-published]
+
+permissions:
+  contents: read
+  packages: read
 
 # Never run two deploys against the same environment at once, and never cancel
 # one half-way through a rollout.
@@ -64,6 +73,9 @@ jobs:
     outputs:
       environment: ${{ steps.target.outputs.environment }}
       ref: ${{ steps.target.outputs.ref }}
+      requested_services: ${{ steps.target.outputs.requested_services }}
+      deploy_services: ${{ steps.scope.outputs.deploy_services }}
+      needs_vault: ${{ steps.scope.outputs.needs_vault }}
       backend_tag: ${{ steps.tags.outputs.backend }}
       frontend_tag: ${{ steps.tags.outputs.frontend }}
       hosted_tag: ${{ steps.tags.outputs.hosted }}
@@ -74,12 +86,16 @@ jobs:
         name: Pick environment and ref from the trigger
         run: |
           set -euo pipefail
+          services=all
+          manual_deploy=false
           case "${{ github.event_name }}" in
             workflow_dispatch)
+              manual_deploy=true
               env_name="${{ github.event.inputs.environment }}"
               ref="${{ github.event.inputs.source_ref }}"
               # Empty means "use the branch selected in GitHub's Run workflow UI".
-              [ -n "$ref" ] || ref="${{ github.ref_name }}" ;;
+              [ -n "$ref" ] || ref="${{ github.ref_name }}"
+              services="${{ github.event.inputs.deploy_services }}" ;;
             repository_dispatch)
               env_name="${{ github.event.client_payload.environment }}"
               [ -n "$env_name" ] || env_name=develop
@@ -103,11 +119,42 @@ jobs:
               esac ;;
             *) echo "::error::unsupported event ${{ github.event_name }}"; exit 1 ;;
           esac
+
+          services="${services//[[:space:]]/}"
+          [ -n "$services" ] || services=all
+          normalized=""
+          append_service() {
+            case " $normalized " in
+              *" $1 "*) ;;
+              *) normalized="${normalized:+$normalized }$1" ;;
+            esac
+          }
+          if [ "$services" = "all" ]; then
+            append_service backend
+            append_service frontend
+            append_service hosted
+          else
+            IFS=',' read -ra requested_services <<< "$services"
+            for service in "${requested_services[@]}"; do
+              case "$service" in
+                backend|frontend|hosted) append_service "$service" ;;
+                *) echo "::error::deploy_services contains '$service'; use all or comma-separated backend,frontend,hosted"; exit 1 ;;
+              esac
+            done
+          fi
+          [ -n "$normalized" ] || { echo "::error::deploy_services resolved to an empty set"; exit 1; }
+
           {
             echo "environment=$env_name"
             echo "ref=$ref"
+            echo "requested_services=$normalized"
+            echo "manual_deploy=$manual_deploy"
           } >> "$GITHUB_OUTPUT"
-          echo "Deploying **$ref** to **$env_name**" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "Deploying **$ref** to **$env_name**"
+            echo
+            echo "Requested services: \`$normalized\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@v4
         # Submodules are NOT cloned: the gitlink SHA is read straight out of the
@@ -157,6 +204,124 @@ jobs:
             echo "| hosted | \`$hosted\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - id: scope
+        name: Pick deployable services
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REQUESTED_SERVICES: ${{ steps.target.outputs.requested_services }}
+          MANUAL_DEPLOY: ${{ steps.target.outputs.manual_deploy }}
+          DISPATCH_SERVICE: ${{ github.event.client_payload.service }}
+          BACKEND_TAG: ${{ steps.tags.outputs.backend }}
+          FRONTEND_TAG: ${{ steps.tags.outputs.frontend }}
+          HOSTED_TAG: ${{ steps.tags.outputs.hosted }}
+        run: |
+          set -euo pipefail
+
+          owner_lc="${OWNER,,}"
+          image_for() {
+            case "$1" in
+              backend)  printf 'ghcr.io/%s/flashcards-backend' "$owner_lc" ;;
+              frontend) printf 'ghcr.io/%s/flashcards-gui' "$owner_lc" ;;
+              hosted)   printf 'ghcr.io/%s/flashcards-hosted' "$owner_lc" ;;
+              *) return 1 ;;
+            esac
+          }
+          tag_for() {
+            case "$1" in
+              backend)  printf '%s' "$BACKEND_TAG" ;;
+              frontend) printf '%s' "$FRONTEND_TAG" ;;
+              hosted)   printf '%s' "$HOSTED_TAG" ;;
+              *) return 1 ;;
+            esac
+          }
+          image_exists() {
+            local image="$1" tag="$2" repo token code
+            repo="${image#ghcr.io/}"
+            token=$(curl -sSf -u "$GHCR_USER:$GHCR_TOKEN" \
+              "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" | jq -r .token)
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $token" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json' \
+              "https://ghcr.io/v2/${repo}/manifests/${tag}")
+            [ "$code" = "200" ]
+          }
+          image_exists_with_retry() {
+            local image="$1" tag="$2"
+            for _ in 1 2 3 4 5; do
+              image_exists "$image" "$tag" && return 0
+              sleep 5
+            done
+            return 1
+          }
+          append_service() {
+            case " $selected " in
+              *" $1 "*) ;;
+              *) selected="${selected:+$selected }$1" ;;
+            esac
+          }
+          contains_service() {
+            case " $REQUESTED_SERVICES " in
+              *" $1 "*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          selected=""
+          if [ "$MANUAL_DEPLOY" = "true" ]; then
+            selected="$REQUESTED_SERVICES"
+            echo "Manual deploy: using requested services as-is." >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo
+              echo "| service | image | deploy? |"
+              echo "|---|---|---|"
+            } >> "$GITHUB_STEP_SUMMARY"
+            for service in backend frontend hosted; do
+              contains_service "$service" || continue
+              image="$(image_for "$service")"
+              tag="$(tag_for "$service")"
+
+              if image_exists "$image" "$tag"; then
+                append_service "$service"
+                verdict="yes"
+              elif [ "$service" = "$DISPATCH_SERVICE" ]; then
+                if image_exists_with_retry "$image" "$tag"; then
+                  append_service "$service"
+                  verdict="yes"
+                else
+                  echo "::error::Dispatched service $service image is not available in GHCR: $image:$tag"
+                  exit 1
+                fi
+              else
+                verdict="not yet"
+              fi
+              echo "| $service | \`$image:$tag\` | $verdict |" >> "$GITHUB_STEP_SUMMARY"
+            done
+          fi
+
+          [ -n "$selected" ] || {
+            echo "::error::None of the requested images exist in GHCR yet; nothing can be deployed."
+            exit 1
+          }
+
+          needs_vault=false
+          case " $selected " in
+            *" backend "*|*" hosted "*) needs_vault=true ;;
+          esac
+
+          {
+            echo "deploy_services=$selected"
+            echo "needs_vault=$needs_vault"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo
+            echo "Deployable services: \`$selected\`"
+            echo "Requires Vault unsealed: \`$needs_vault\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ---------------------------------------------------------------------------
   # Converges the target node before app manifests are rendered and applied.
   # The called workflow runs in safe CI mode: it verifies Vault is unsealed but
@@ -170,6 +335,7 @@ jobs:
       environment: ${{ needs.resolve.outputs.environment }}
       ref: ${{ needs.resolve.outputs.ref }}
       vault_bootstrap: false
+      vault_required_unsealed: ${{ needs.resolve.outputs.needs_vault == 'true' }}
     secrets: inherit
 
   # ---------------------------------------------------------------------------
@@ -210,8 +376,64 @@ jobs:
       - name: Render
         run: |
           set -euo pipefail
-          kustomize build "k8s/overlays/${{ needs.resolve.outputs.environment }}" > rendered.yaml
-          echo "rendered $(grep -c '^kind:' rendered.yaml) resources"
+          kustomize build "k8s/overlays/${{ needs.resolve.outputs.environment }}" > rendered-full.yaml
+          echo "rendered $(grep -c '^kind:' rendered-full.yaml) resources"
+
+      - name: Select resources for the requested services
+        env:
+          DEPLOY_SERVICES: ${{ needs.resolve.outputs.deploy_services }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pyyaml
+          python - <<'PY'
+          import os
+          import sys
+          import yaml
+          from collections import Counter
+
+          selected = set(os.environ["DEPLOY_SERVICES"].split())
+          docs = [doc for doc in yaml.safe_load_all(open("rendered-full.yaml", encoding="utf-8")) if doc]
+
+          def ingress_backend_services(doc):
+              services = set()
+              for rule in doc.get("spec", {}).get("rules", []):
+                  for path in rule.get("http", {}).get("paths", []):
+                      service = path.get("backend", {}).get("service", {}).get("name")
+                      if service:
+                          services.add(service)
+              return services
+
+          def include(doc):
+              kind = doc.get("kind")
+              name = doc.get("metadata", {}).get("name")
+
+              if kind in {"Namespace", "ConfigMap", "NetworkPolicy"}:
+                  return True
+              if kind == "Middleware":
+                  return "frontend" in selected
+              if kind == "ServiceAccount":
+                  return name in selected
+              if kind in {"Deployment", "HorizontalPodAutoscaler", "ServiceMonitor"}:
+                  return name in selected
+              if kind == "Service":
+                  # Frontend can be deployed before backend. Keeping the backend
+                  # Service makes backend:8080 resolvable, just with no endpoints.
+                  return name in selected or ("frontend" in selected and name == "backend")
+              if kind == "Ingress":
+                  return bool(ingress_backend_services(doc) & selected)
+              return False
+
+          output = [doc for doc in docs if include(doc)]
+          if not output:
+              print("No resources selected", file=sys.stderr)
+              sys.exit(1)
+
+          with open("rendered.yaml", "w", encoding="utf-8") as f:
+              yaml.safe_dump_all(output, f, sort_keys=False)
+
+          print(f"selected {len(output)} of {len(docs)} resources for: {', '.join(sorted(selected))}")
+          print("kinds:", dict(sorted(Counter(doc["kind"] for doc in output).items())))
+          PY
 
       - name: Validate against the Kubernetes schemas
         run: |
@@ -300,10 +522,15 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
-      - name: Check the cluster is reachable and Vault is unsealed
+      - name: Check the cluster is reachable
         run: |
           set -euo pipefail
           ssh target 'kubectl version -o json >/dev/null && kubectl get nodes'
+
+      - name: Check Vault is unsealed
+        if: needs.resolve.outputs.needs_vault == 'true'
+        run: |
+          set -euo pipefail
           # Vault standalone comes back sealed after a reboot, and the pods would
           # then hang in Init with no obvious cause. Say so up front.
           if ! ssh target 'kubectl -n vault exec vault-0 -- vault status -format=json' | grep -q '"sealed": *false'; then
@@ -363,9 +590,11 @@ jobs:
 
       - name: Wait for the rollout
         id: rollout
+        env:
+          DEPLOY_SERVICES: ${{ needs.resolve.outputs.deploy_services }}
         run: |
           set -euo pipefail
-          for d in backend frontend hosted; do
+          for d in $DEPLOY_SERVICES; do
             echo "::group::rollout $d"
             # shellcheck disable=SC2029
             ssh target "kubectl -n ${{ vars.K8S_NAMESPACE }} rollout status deployment/$d --timeout=8m"
@@ -374,6 +603,8 @@ jobs:
 
       - name: Diagnostics and rollback on failure
         if: failure()
+        env:
+          DEPLOY_SERVICES: ${{ needs.resolve.outputs.deploy_services }}
         run: |
           set +e
           ns='${{ vars.K8S_NAMESPACE }}'
@@ -385,7 +616,7 @@ jobs:
           # shellcheck disable=SC2029
           ssh target "kubectl -n $ns get events --sort-by=.lastTimestamp | tail -40"
           echo "::endgroup::"
-          for d in backend frontend hosted; do
+          for d in $DEPLOY_SERVICES; do
             echo "::group::logs $d"
             # shellcheck disable=SC2029
             ssh target "kubectl -n $ns logs deployment/$d -c application --tail=100"
@@ -395,11 +626,11 @@ jobs:
             echo "::endgroup::"
           done
           echo "::group::rollback"
-          for d in backend frontend hosted; do
+          for d in $DEPLOY_SERVICES; do
             # shellcheck disable=SC2029
             ssh target "kubectl -n $ns rollout undo deployment/$d"
           done
-          for d in backend frontend hosted; do
+          for d in $DEPLOY_SERVICES; do
             # shellcheck disable=SC2029
             ssh target "kubectl -n $ns rollout status deployment/$d --timeout=5m"
           done
@@ -419,4 +650,5 @@ jobs:
             echo "- host: \`${{ vars.SSH_HOST }}\`"
             echo "- namespace: \`${{ vars.K8S_NAMESPACE }}\`"
             echo "- url: https://${{ vars.PUBLIC_HOST }}"
+            echo "- services: \`${{ needs.resolve.outputs.deploy_services }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -151,6 +151,12 @@ Before anything touches a server, `render` confirms every resolved tag actually
 exists in GHCR. A missing image fails the run with a clear message instead of an
 `ImagePullBackOff` twenty seconds later.
 
+Automatic runs (`push` and `repository_dispatch`) request all services, then
+resolve the deployable subset from GHCR. On a fresh environment this means the
+first published frontend image can deploy the frontend alone; when backend and
+hosted images appear, the next automatic run includes them. Manual runs use the
+operator's `deploy_services` input exactly.
+
 ### Repository configuration
 
 Set once, on `Path-Of-Execution-Team/FlashCards`:
@@ -205,6 +211,34 @@ On failure the workflow dumps pods, events, application logs and
 Deployments.
 
 ## First-time setup
+
+### Empty Server, Frontend First
+
+For a brand-new environment where you want to see the frontend before the
+backend and Vault secrets are ready:
+
+1. Configure the GitHub repository secrets and environment variables with
+   `.github/setup-repository.sh`.
+2. Make sure the frontend image exists in GHCR. Usually that means pushing the
+   frontend submodule branch so its `docker-publish.yml` finishes successfully.
+3. Run the root **Deploy** workflow manually:
+
+```text
+environment     develop
+source_ref      <root branch/tag/SHA to deploy>
+deploy_services frontend
+frontend_tag    <optional, only if you want to override the submodule tag>
+```
+
+That run still executes Ansible first, so k3s, Traefik, cert-manager, Vault,
+PostgreSQL, Kafka and the app namespace are created. Because only `frontend` is
+selected, the workflow does not require Vault to be unsealed and does not check
+or deploy backend/hosted images.
+
+When the backend is ready, initialise/unseal/configure Vault, seed the app
+secrets, create the database role with `db/bootstrap-flashcards-db.sql`, then
+run **Deploy** again with `deploy_services=backend` or `deploy_services=all`.
+Use `hosted` the same way when the worker image is ready.
 
 ### Production (`57.129.66.163`)
 
@@ -369,12 +403,24 @@ unaffected — it scrapes the ClusterIP Services directly.
 Push to `main` or `develop`. Automatic deploys keep the fixed mapping:
 `develop` -> develop and `main` -> production.
 
+The automatic path is bootstrap-aware: it verifies the branch's resolved image
+tags in GHCR and deploys the newest available branch state for the services that
+already have images. Once all three images exist, automatic deploys become full
+`backend frontend hosted` rollouts again.
+
 For a manual test deploy, run the **Deploy** workflow and choose:
 
 - `environment`: target cluster, `develop` or `production`
 - `source_ref`: branch, tag or SHA to check out; leave empty to use the branch
   selected in GitHub's **Run workflow** dropdown
+- `deploy_services`: `all`, or a comma-separated subset such as `frontend` or
+  `frontend,backend`
 - optional image tag overrides for one-off rollback or smoke testing
+
+`frontend` can be deployed before `backend`. The rendered manifest keeps the
+`backend` Service so `backend:8080` resolves in-cluster, but it does not create
+the backend Deployment or check the backend image tag. API calls will fail until
+the backend is deployed, but the frontend rollout can complete.
 
 By hand, if CI is unavailable — substitute `moomento-dev` and `overlays/develop`
 for the develop node:

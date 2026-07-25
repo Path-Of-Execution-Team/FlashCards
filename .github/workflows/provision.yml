@@ -16,6 +16,11 @@ on:
         required: false
         type: boolean
         default: false
+      vault_required_unsealed:
+        description: Require Vault to be unsealed before provisioning succeeds
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       environment:
@@ -32,6 +37,11 @@ on:
         required: true
         type: boolean
         default: false
+      vault_required_unsealed:
+        description: Require Vault to be unsealed before provisioning succeeds
+        required: true
+        type: boolean
+        default: true
 
 concurrency:
   group: provision-${{ inputs.environment }}
@@ -105,4 +115,5 @@ jobs:
             -e "target_environment=${{ inputs.environment }}" \
             -e "vault_initialize=${{ inputs.vault_bootstrap }}" \
             -e "vault_unseal_from_node_file=${{ inputs.vault_bootstrap }}" \
-            -e "vault_configure_kubernetes_auth=${{ inputs.vault_bootstrap }}"
+            -e "vault_configure_kubernetes_auth=${{ inputs.vault_bootstrap }}" \
+            -e "vault_required_unsealed=${{ inputs.vault_required_unsealed }}"
