@@ -143,8 +143,9 @@ git ls-tree HEAD source/FlashCardsBackend | awk '{print $3}' | cut -c1-7
 ```
 
 A `repository_dispatch` from a subproject overrides the one service it names and
-leaves the other two on their pinned tags. `workflow_dispatch` accepts an
-override per service, which is the manual-rollback path.
+leaves the other two on their pinned tags. `workflow_dispatch` lets an operator
+choose both the target environment and a `source_ref` (branch, tag or SHA), and
+also accepts an override per service for manual rollbacks.
 
 Before anything touches a server, `render` confirms every resolved tag actually
 exists in GHCR. A missing image fails the run with a clear message instead of an
@@ -365,8 +366,15 @@ unaffected — it scrapes the ClusterIP Services directly.
 
 ## Routine deploy
 
-Push to `main` or `develop`. To roll out one service without a commit, run the
-**Deploy** workflow with an environment and a tag override.
+Push to `main` or `develop`. Automatic deploys keep the fixed mapping:
+`develop` -> develop and `main` -> production.
+
+For a manual test deploy, run the **Deploy** workflow and choose:
+
+- `environment`: target cluster, `develop` or `production`
+- `source_ref`: branch, tag or SHA to check out; leave empty to use the branch
+  selected in GitHub's **Run workflow** dropdown
+- optional image tag overrides for one-off rollback or smoke testing
 
 By hand, if CI is unavailable — substitute `moomento-dev` and `overlays/develop`
 for the develop node:

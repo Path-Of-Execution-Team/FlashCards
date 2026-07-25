@@ -23,6 +23,10 @@ on:
         required: true
         type: choice
         options: [develop, production]
+      source_ref:
+        description: "Branch, tag or SHA to deploy (default: branch selected in the workflow UI)"
+        required: false
+        type: string
       backend_tag:
         description: "Override backend tag (default: from submodule pointer)"
         required: false
@@ -73,8 +77,9 @@ jobs:
           case "${{ github.event_name }}" in
             workflow_dispatch)
               env_name="${{ github.event.inputs.environment }}"
-              # Whatever branch the operator launched it from.
-              ref="${{ github.ref_name }}" ;;
+              ref="${{ github.event.inputs.source_ref }}"
+              # Empty means "use the branch selected in GitHub's Run workflow UI".
+              [ -n "$ref" ] || ref="${{ github.ref_name }}" ;;
             repository_dispatch)
               env_name="${{ github.event.client_payload.environment }}"
               [ -n "$env_name" ] || env_name=develop
