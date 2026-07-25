@@ -1,51 +1,100 @@
-# FlashCards on the Bosman k3s cluster
+# FlashCards on Kubernetes
 
-Kubernetes manifests for the three subprojects in `source/`, targeting the
-single-node k3s server described in [`../INFRASTRUCTURE.md`](../INFRASTRUCTURE.md).
+Manifests for the three subprojects in `source/`, deployed to two single-node k3s
+servers. The production node is the one described in
+[`../INFRASTRUCTURE.md`](../INFRASTRUCTURE.md).
+
+| Environment | Branch | Server | SSH alias | Namespace | Public |
+|---|---|---|---|---|---|
+| production | `main` | `57.129.66.163` | `ovh` | `moomento` | `moomento.pl` |
+| develop | `develop` | `57.128.251.9` | `ovh2` | `moomento-dev` | `dev.moomento.pl` |
 
 | Workload | Source | Kind | Port | Public |
 |---|---|---|---:|---|
-| `frontend` | `source/FlashCardsGUI` (Next.js 15) | Deployment | 3000 | `moomento.pl` |
-| `backend` | `source/FlashCardsBackend` (Spring Boot 3.5) | Deployment | 8080 | `api.moomento.pl/api` |
+| `frontend` | `source/FlashCardsGUI` (Next.js 15) | Deployment | 3000 | yes |
+| `backend` | `source/FlashCardsBackend` (Spring Boot 3.5) | Deployment | 8080 | no |
 | `hosted` | `source/FlashCardsHostedServices` (Spring Boot 3.5) | Deployment | 8081 | no |
 
-Everything lives in the `moomento` namespace. Nothing here provisions
-PostgreSQL, Kafka, Vault or the monitoring stack — those are shared
-infrastructure this deployment only consumes.
+**Only the frontend is reachable from the internet, in both environments.** The
+backend and `hosted` are ClusterIP Services with no Ingress at all. Nothing about
+this is environment-specific — there is no public API hostname anywhere.
+
+The two namespaces differ on purpose. A develop manifest applied to the
+production cluster by mistake creates `moomento-dev` rather than overwriting
+production workloads.
+
+Nothing here provisions PostgreSQL, Kafka, Vault or the monitoring stack on
+**production** — those are shared infrastructure this deployment only consumes.
+On **develop** the same dependencies are installed by
+[`provision/provision-dev-node.sh`](provision/provision-dev-node.sh), because
+that node started out empty.
 
 ## Layout
 
 ```
 k8s/
-├── kustomization.yaml        # the only file you normally edit
-├── namespace.yaml
-├── serviceaccounts.yaml      # one per workload, bound to Vault auth roles
-├── backend.yaml              # Deployment + ClusterIP Service
-├── frontend.yaml
-├── hosted.yaml
-├── ingress.yaml              # Traefik + cert-manager + deny-public middleware
-├── hpa.yaml
-├── servicemonitors.yaml
-├── networkpolicies.yaml      # default-deny model
+├── base/                       # environment-agnostic; no namespace, no tags, no hostnames
+│   ├── kustomization.yaml
+│   ├── namespace.yaml
+│   ├── serviceaccounts.yaml    # one per workload, bound to Vault auth roles
+│   ├── backend.yaml            # Deployment + ClusterIP Service
+│   ├── frontend.yaml
+│   ├── hosted.yaml
+│   ├── ingress-frontend.yaml   # public host + deny-public middleware for /metrics
+│   └── networkpolicies.yaml    # default-deny model
+├── components/                 # opt-in add-ons, each with its own prerequisite
+│   ├── autoscaling/            # HPAs; needs metrics-server and spare memory
+│   └── monitoring/             # ServiceMonitors; needs the Prometheus CRDs
+├── overlays/
+│   ├── production/             # the only file you normally edit for prod
+│   │   └── kustomization.yaml
+│   └── develop/
+│       ├── kustomization.yaml
+│       └── patch-{backend,frontend,hosted}.yaml
+├── provision/provision-dev-node.sh
 ├── db/bootstrap-flashcards-db.sql
 └── vault/bootstrap-vault.example.sh
 ```
+
+Components exist rather than plain file references because kustomize forbids an
+overlay from referencing individual files outside its own directory. A directory
+with `kind: Component` is the supported way to share optional resources.
+
+Render either environment locally:
+
+```bash
+kustomize build k8s/overlays/production
+kustomize build k8s/overlays/develop
+```
+
+## What develop leaves out, and why
+
+| | production | develop |
+|---|---|---|
+| Node | 4 vCPU / 8Gi | 2 vCPU / 3.7Gi |
+| `autoscaling` | yes | no — no headroom for a second replica |
+| `monitoring` | yes | no — no Prometheus, no ServiceMonitor CRD |
+| DB pool max | 5 | 3 |
+| Vault path | `secret/projects/moomento/production/*` | `.../develop/*` |
+| Vault role | `moomento-backend`, `moomento-hosted` | `moomento-dev-backend`, `moomento-dev-hosted` |
+
+Public exposure is identical in both: one hostname, frontend only.
 
 ## External dependencies
 
 | Dependency | Address | Provided by |
 |---|---|---|
-| PostgreSQL | `postgresql.database.svc.cluster.local:5432` | cluster, namespace `database` |
-| Kafka | `kafka.kafka.svc.cluster.local:9092` | cluster, namespace `kafka` |
-| Vault | `vault.vault.svc.cluster.local:8200` | cluster, namespace `vault` |
-| Prometheus | scrapes via `ServiceMonitor` | namespace `monitoring` |
-| Loki | Alloy collects pod stdout | namespace `monitoring` |
-| SMTP relay | `SPRING_MAIL_HOST` in `kustomization.yaml` | external |
+| PostgreSQL | `postgresql.database.svc.cluster.local:5432` | namespace `database` |
+| Kafka | `kafka.kafka.svc.cluster.local:9092` | namespace `kafka` |
+| Vault | `vault.vault.svc.cluster.local:8200` | namespace `vault` |
+| Prometheus | scrapes via `ServiceMonitor` | namespace `monitoring` (production only) |
+| Loki | Alloy collects pod stdout | namespace `monitoring` (production only) |
+| SMTP relay | `SPRING_MAIL_HOST` in the overlay | external |
 
-Kafka is expected as shared infrastructure in its own `kafka` namespace, the same
-way PostgreSQL and Grafana are. If you place the broker somewhere else, update
-both `SPRING_KAFKA_BOOTSTRAP_SERVERS` in `kustomization.yaml` **and** the
-namespace selector in the `allow-kafka-egress` NetworkPolicy.
+The in-cluster addresses are identical in both environments, so the manifests do
+not vary — only the instances behind them do. If you move the broker, update both
+`SPRING_KAFKA_BOOTSTRAP_SERVERS` in the overlay **and** the namespace selector in
+the `allow-kafka-egress` NetworkPolicy.
 
 ### Logging
 
@@ -60,24 +109,114 @@ and `LOKI_PUSH_URL` is not configured anywhere.
 ```
 
 If Promtail is still running alongside Alloy, keep the `moomento` drop rule to
-avoid double ingestion.
+avoid double ingestion. There is no log shipping on the develop node — use
+`kubectl logs`.
+
+## CI/CD
+
+Pushing is the deploy. Nothing is applied from a workstation in normal operation.
+
+```
+                     push to develop
+source/FlashCards*  ──────────────────►  docker-publish.yml
+  (submodule repo)                         ├─ test
+                                           ├─ publish  ghcr.io/…:sha-<short>
+                                           └─ notify   repository_dispatch ─┐
+                                                                            │
+                                                                            ▼
+FlashCards (root)   ──────────────────►  deploy.yml  ◄── push to main/develop
+                     push to develop      ├─ resolve  branch → environment + tags
+                                          ├─ render   kustomize + kubeconform + GHCR check
+                                          └─ deploy   ssh → kubectl apply --server-side
+```
+
+### Which image tag gets deployed
+
+The root repository pins each subproject to an exact commit through git
+submodules, and each subproject publishes `sha-<short-sha>`. So the tag is
+derivable from the submodule pointer — no manual version bookkeeping, and the
+deployed state provably matches the root commit:
+
+```bash
+git ls-tree HEAD source/FlashCardsBackend | awk '{print $3}' | cut -c1-7
+```
+
+A `repository_dispatch` from a subproject overrides the one service it names and
+leaves the other two on their pinned tags. `workflow_dispatch` accepts an
+override per service, which is the manual-rollback path.
+
+Before anything touches a server, `render` confirms every resolved tag actually
+exists in GHCR. A missing image fails the run with a clear message instead of an
+`ImagePullBackOff` twenty seconds later.
+
+### Repository configuration
+
+Set once, on `Path-Of-Execution-Team/FlashCards`:
+
+| Kind | Name | Value |
+|---|---|---|
+| secret | `SSH_PRIVATE_KEY` | deploy key accepted by both nodes |
+| secret | `GHCR_PULL_TOKEN` | classic PAT, `read:packages` only |
+| variable | `SSH_KNOWN_HOSTS` | `ssh-keyscan` output for both hosts — public data, so a variable rather than a secret, which keeps it unmasked in logs |
+
+Then one [GitHub Environment](https://github.com/Path-Of-Execution-Team/FlashCards/settings/environments)
+per target, each with four variables:
+
+| Variable | `production` | `develop` |
+|---|---|---|
+| `SSH_HOST` | `57.129.66.163` | `57.128.251.9` |
+| `SSH_USER` | `ubuntu` | `ubuntu` |
+| `K8S_NAMESPACE` | `moomento` | `moomento-dev` |
+| `PUBLIC_HOST` | `moomento.pl` | `dev.moomento.pl` |
+
+Environments are what make a required reviewer on production possible later
+without touching the workflow.
+
+And in **each** of the three subproject repositories:
+
+| Kind | Name | Value |
+|---|---|---|
+| secret | `DEPLOY_DISPATCH_TOKEN` | fine-grained PAT scoped to `Path-Of-Execution-Team/FlashCards`, `Contents: read and write` |
+
+`GITHUB_TOKEN` cannot be used for the dispatch — it is scoped to the repository
+it runs in. The `notify` job is separate from `publish` so a missing or expired
+token shows up as its own red check while `publish` stays green, making it clear
+the image was pushed and only the rollout trigger failed.
+
+### How the deploy step works
+
+`kubectl` runs **on the node**, over SSH. The kubeconfig never leaves the server
+and CI never holds cluster-admin credentials — only one rendered YAML file is
+shipped. The apply is server-side with a dedicated field manager:
+
+```bash
+kubectl apply --dry-run=server -f /tmp/flashcards-deploy.yaml   # rule 12
+kubectl apply --server-side --force-conflicts \
+  --field-manager=github-actions -f /tmp/flashcards-deploy.yaml
+```
+
+`--force-conflicts` is needed the first time a resource previously applied
+client-side is taken over by this field manager.
+
+On failure the workflow dumps pods, events, application logs and
+`vault-agent-init` logs, then runs `kubectl rollout undo` on all three
+Deployments.
 
 ## First-time setup
 
-Run these in order. Steps 1–4 are one-time.
+### Production (`57.129.66.163`)
 
-### 1. DNS
+Steps 1–4 are one-time.
 
-Create Cloudflare records for both hostnames pointing at `57.129.66.163`
-**before** applying, otherwise the ACME http01 challenge cannot complete.
-Recommended SSL/TLS mode: `Full (strict)`.
+**1. DNS.** Create the Cloudflare record **before** applying, or the ACME http01
+challenge cannot complete. SSL/TLS mode `Full (strict)`. One record — there is no
+public API hostname.
 
 ```
 moomento.pl        A  57.129.66.163
-api.moomento.pl    A  57.129.66.163
 ```
 
-### 2. Vault policies, roles and secrets
+**2. Vault policies, roles and secrets.**
 
 ```bash
 export VAULT_ADDR=https://vault.bosman.top
@@ -85,7 +224,7 @@ vault login -method=userpass username=bosman
 
 export FLASHCARDS_MAIL_USERNAME='...'
 export FLASHCARDS_MAIL_PASSWORD='...'
-./vault/bootstrap-vault.example.sh
+ENVIRONMENT=production ./vault/bootstrap-vault.example.sh
 ```
 
 This creates the `moomento-backend` / `moomento-hosted` policies and Kubernetes
@@ -96,7 +235,10 @@ secret/projects/moomento/production/backend   SPRING_DATASOURCE_PASSWORD, JWT_SE
 secret/projects/moomento/production/hosted    MAIL_USERNAME, MAIL_PASSWORD
 ```
 
-### 3. PostgreSQL database and role
+Re-running the script never overwrites an existing path, so it cannot rotate a
+live database password out from under running pods.
+
+**3. PostgreSQL database and role.**
 
 ```bash
 FLASHCARDS_DB_PASSWORD=$(vault kv get -field=SPRING_DATASOURCE_PASSWORD \
@@ -119,89 +261,117 @@ kubectl run pg-connectivity-test -n moomento --rm -it --restart=Never \
           -c 'select current_user, current_database();'
 ```
 
-### 4. Image pull secret
-
-GHCR packages are private by default, so the node needs credentials. Use a
-classic PAT with only `read:packages`. This is a Secret — it is created
-imperatively and never committed.
+**4. Image pull secret.** The deploy workflow refreshes this on every run from
+`GHCR_PULL_TOKEN`, so this is only needed if you apply by hand:
 
 ```bash
-kubectl create namespace moomento --dry-run=client -o yaml | kubectl apply -f -
-
 kubectl create secret docker-registry ghcr-pull -n moomento \
   --docker-server=ghcr.io \
   --docker-username='<github-user>' \
   --docker-password='<PAT with read:packages>'
 ```
 
-Alternatively make the three GHCR packages public and delete the
-`imagePullSecrets` blocks from the three workload manifests.
+**5. Push to `main`.** That is the deploy.
 
-### 5. Build the images
+### Develop (`57.128.251.9`)
 
-Each subproject has a `Dockerfile` and a `docker-publish.yml` workflow that
-pushes to GHCR on every push to `main`. Trigger it once per repository, then set
-the tags:
+The node started empty — no k3s, no kubectl, no docker. Everything comes from one
+script:
 
 ```bash
-kustomize edit set image flashcards-backend=*:sha-1a2b3c4
-kustomize edit set image flashcards-frontend=*:sha-5d6e7f8
-kustomize edit set image flashcards-hosted=*:sha-9a0b1c2
+scp k8s/provision/provision-dev-node.sh ovh2:
+ssh ovh2 'bash provision-dev-node.sh'
 ```
 
-### 6. Apply
+It installs k3s (Traefik from Helm, not the bundled manifest), cert-manager with
+a `letsencrypt-production` ClusterIssuer, Vault in standalone mode with the Agent
+Injector, and a dedicated in-cluster PostgreSQL and single-node KRaft Kafka. It
+is idempotent — re-running it skips whatever is already there.
+
+The script generates the PostgreSQL superuser password and the Vault unseal key
+**on the node**. Nothing is printed and nothing is written into this repository;
+Vault's init output lands in `/root/vault-init.json` mode 0600. Copy it into a
+password manager and shred it.
+
+Then, still on the node:
 
 ```bash
-kubectl apply -k . --dry-run=server    # required by INFRASTRUCTURE.md rule 12
-kubectl apply -k .
+kubectl -n vault port-forward svc/vault 8200:8200 &
+export VAULT_ADDR=http://127.0.0.1:8200
+vault login                       # root token from /root/vault-init.json
+export FLASHCARDS_MAIL_USERNAME='...' FLASHCARDS_MAIL_PASSWORD='...'
+ENVIRONMENT=develop ./bootstrap-vault.example.sh
 ```
+
+Vault on this node has a single unseal share, which is a deliberate trade for a
+disposable environment. **It comes back sealed after every reboot** and pods will
+hang in `Init:0/1` until you unseal it:
+
+```bash
+kubectl -n vault exec -it vault-0 -- vault operator unseal
+```
+
+Add DNS `dev.moomento.pl A 57.128.251.9`, then push to `develop`.
 
 ## Configuration
 
-`kustomization.yaml` is the single place for non-secret values: hostnames, image
-tags, database and Kafka addresses, connection pool sizes, mail endpoint. The
-manifests read them from the generated `app-config` ConfigMap, and the Ingress
-hostnames are injected with `replacements` so rules and TLS SANs cannot drift
-apart.
+The overlay's `kustomization.yaml` is the single place for non-secret values:
+hostnames, image tags, database and Kafka addresses, pool sizes, mail endpoint.
+The manifests read them from the generated `app-config` ConfigMap, and the
+Ingress hostnames are injected with `replacements` so rules and TLS SANs cannot
+drift apart.
 
-The ConfigMap name suffix hash is disabled (the `replacements` need a stable
-name), which means editing a value does **not** restart the pods:
+The ConfigMap keeps kustomize's name suffix hash, so editing any value changes
+the ConfigMap name, which changes the pod template, which rolls the pods. No
+`kubectl rollout restart` is needed. This works alongside `replacements` because
+they resolve the source by its pre-hash name `app-config` while the
+name-reference transformer rewrites every `configMapKeyRef` to the hashed name.
 
-```bash
-kubectl apply -k .
-kubectl rollout restart -n moomento deploy/backend deploy/frontend deploy/hosted
-```
+Two values are not derivable and must be edited by hand if you rename a
+namespace:
 
-Two values are not in `kustomization.yaml` because kustomize cannot rewrite
-them. If you rename the namespace, also update by hand:
-
-- `traefik.ingress.kubernetes.io/router.middlewares: moomento-deny-public@kubernetescrd`
-  in `ingress.yaml`
+- the `router.middlewares` JSON patch in the overlay
+  (`moomento-deny-public@kubernetescrd`)
 - `NAMESPACE` in `vault/bootstrap-vault.example.sh`, then re-run it
 
 ### Request routing
 
-The browser only ever talks to `moomento.pl`. `apiClient.ts` uses the relative
-base URL `/api`, and `next.config.ts` rewrites `/api/:path*` to
+The browser only ever talks to the frontend host. `apiClient.ts` uses the
+relative base URL `/api`, and `next.config.ts` rewrites `/api/:path*` to
 `http://${NEXT_PUBLIC_API_URL}/api/:path*` server-side — which is `backend:8080`,
-a ClusterIP address. `api.moomento.pl` exists for external API clients only; the
-frontend does not depend on it.
+a ClusterIP address. So the API hop never leaves the cluster and the backend
+needs no Ingress at all.
 
-Because of that, `/actuator` is deliberately **not** routed on
-`api.moomento.pl`. The backend exposes Prometheus metrics and detailed health
-there with no authentication (`management.endpoint.prometheus.access=unrestricted`),
-so publishing a bare `/` on that host would put them on the internet. Same for
-the frontend: `frontend-metrics-deny` puts an `ipAllowList` middleware in front
-of `/metrics`, which Traefik prefers over the `/` route because its rule is
-longer. Prometheus is unaffected — it scrapes the ClusterIP Services directly.
+That is why there is no public API hostname in either environment. It is also the
+safer default: the backend serves `/actuator` on the same port as `/api`, with
+Prometheus metrics and detailed health exposed without authentication
+(`management.endpoint.prometheus.access=unrestricted`). With no Ingress in front
+of it, none of that is routable from outside.
+
+If external, non-browser API clients are ever needed, add an Ingress that
+publishes **only** `/api` — never a bare `/`, which would also expose
+`/actuator`. Add `/swagger-ui` and `/v3/api-docs` explicitly if you want the docs
+public.
+
+The frontend does serve one sensitive path of its own, `/metrics`.
+`frontend-metrics-deny` puts an `ipAllowList` middleware in front of it, which
+Traefik prefers over the `/` route because its rule is longer. Prometheus is
+unaffected — it scrapes the ClusterIP Services directly.
 
 ## Routine deploy
 
+Push to `main` or `develop`. To roll out one service without a commit, run the
+**Deploy** workflow with an environment and a tag override.
+
+By hand, if CI is unavailable — substitute `moomento-dev` and `overlays/develop`
+for the develop node:
+
 ```bash
-cd k8s
+cd k8s/overlays/production
 kustomize edit set image flashcards-backend=*:sha-<new>
-kubectl apply -k . --dry-run=server
-kubectl apply -k .
+kustomize build . > /tmp/rendered.yaml
+kubectl apply --dry-run=server -f /tmp/rendered.yaml
+kubectl apply --server-side --force-conflicts -f /tmp/rendered.yaml
 kubectl rollout status -n moomento deploy/backend --timeout=5m
 ```
 
@@ -209,49 +379,51 @@ kubectl rollout status -n moomento deploy/backend --timeout=5m
 
 ```bash
 kubectl get pods,svc,ingress,hpa -n moomento
-kubectl get certificate -n moomento              # want READY=True on both
+kubectl get certificate -n moomento              # want READY=True
 kubectl top pods -n moomento
 
 # Vault injection worked (file present, and no secret printed)
 kubectl exec -n moomento deploy/backend -c application -- \
   ls -l /vault/secrets/backend.properties
 
-# Metrics are being scraped
 kubectl exec -n moomento deploy/backend -c application -- \
   wget -qO- localhost:8080/actuator/health
 
-# Public endpoints
+# Public endpoints - exactly one hostname per environment
 curl -sI https://moomento.pl | head -1
-curl -s  https://api.moomento.pl/api/... | head
-# these two must NOT return metrics:
-curl -s https://moomento.pl/metrics | head -1
-curl -sI https://api.moomento.pl/actuator/prometheus | head -1
+curl -sI https://dev.moomento.pl | head -1
+
+# Must NOT return metrics (ipAllowList middleware):
+curl -s  https://moomento.pl/metrics | head -1
+
+# Must NOT reach the backend at all - there is no Ingress for it. Expect a
+# Traefik 404, and no `backend` row in:
+kubectl get ingress -n moomento
 ```
 
-In Grafana, the targets appear as `serviceMonitor/moomento/{backend,frontend,hosted}/0`.
+In Grafana, the production targets appear as
+`serviceMonitor/moomento/{backend,frontend,hosted}/0`.
 
 ## Rollback
 
+CI does this automatically when a rollout fails. Manually:
+
 ```bash
-# fastest: previous ReplicaSet
 kubectl rollout undo -n moomento deploy/backend
 kubectl rollout status -n moomento deploy/backend
-
-# or pin the previous image tag and re-apply
-kustomize edit set image flashcards-backend=*:sha-<previous>
-kubectl apply -k .
 ```
 
-`revisionHistoryLimit: 3`, so the last three revisions are available.
-`kubectl rollout history -n moomento deploy/backend` lists them.
+`revisionHistoryLimit: 3`, so the last three revisions are available;
+`kubectl rollout history -n moomento deploy/backend` lists them. To pin a
+specific older image instead, use the **Deploy** workflow's tag override.
 
 A rollback does **not** revert database schema changes made by Hibernate — see
 the schema note below.
 
 ## Backups
 
-`local-path` volumes live on the single node and are not replicated. This
-deployment owns no PVC of its own; all persistent state is the `flashcards`
+`local-path` volumes live on the single node and are not replicated. The
+application owns no PVC of its own; all persistent state is the `flashcards`
 database.
 
 ```bash
@@ -264,7 +436,8 @@ kubectl exec -i -n database postgresql-0 -- \
   pg_restore -U postgres -d flashcards --clean --if-exists < flashcards-<date>.dump
 ```
 
-Copy the dumps off the server. Nothing about this cluster is a backup.
+Copy the dumps off the server. Nothing about either cluster is a backup. The
+develop node's PostgreSQL and Kafka PVCs are explicitly disposable.
 
 ## Known deviations and follow-ups
 
@@ -284,23 +457,29 @@ Worth fixing, in rough priority order:
    Liquibase lands; until then treat `maxReplicas: 3` scale-ups as safe only
    because the schema rarely changes.
 
-3. **No PodDisruptionBudgets.** On a single node they would only block drains
+3. **Develop Vault needs a manual unseal after every reboot.** One unseal share,
+   stored in a password manager. Acceptable for a disposable environment,
+   surprising if you have forgotten it — hence the note above and the explicit
+   pre-flight check in the deploy workflow.
+
+4. **No PodDisruptionBudgets.** On a single node they would only block drains
    without buying availability. Add them if a second node ever appears.
 
-4. **`hosted` HPA is capped at 2.** Scaling a Kafka consumer group past the
+5. **`hosted` HPA is capped at 2.** Scaling a Kafka consumer group past the
    partition count only adds idle consumers. Raise `maxReplicas` together with
    the topic partition count.
 
-5. **Read-only root filesystem.** All three containers run with
+6. **Read-only root filesystem.** All three containers run with
    `readOnlyRootFilesystem: true`, non-root uid 10001 and all capabilities
    dropped. Writable paths are explicit emptyDirs (`/tmp`, and
    `/app/.next/cache` for the frontend). If a new library needs to write
    somewhere, add an emptyDir rather than disabling the flag.
 
-6. **Resource limits are estimates, not load-test results.** The node has 4 vCPU
-   and 8Gi shared with PostgreSQL, Vault, Traefik and kube-prometheus-stack.
-   Sum of requests at full HPA scale-out is roughly 3.1Gi. Check `k top nodes`
-   before raising anything.
+7. **Resource limits are estimates, not load-test results.** Production shares
+   4 vCPU / 8Gi with PostgreSQL, Vault, Traefik and kube-prometheus-stack; sum of
+   requests at full HPA scale-out is roughly 3.1Gi. Develop has 2 vCPU / 3.7Gi
+   for everything, single replicas, no monitoring stack. Check `kubectl top
+   nodes` before raising anything.
 
 ## Troubleshooting
 
@@ -312,8 +491,16 @@ kubectl logs -n moomento deploy/backend -c vault-agent-init
 kubectl exec -n vault vault-0 -- vault status
 ```
 
-**`ImagePullBackOff`** — the `ghcr-pull` secret is missing, expired, or the PAT
-lacks `read:packages` (step 4).
+On develop this is most often just a sealed Vault after a reboot.
+
+**`Permission denied` reading `/vault/secrets/*.properties`** — the
+`vault.hashicorp.com/agent-run-as-same-user: "true"` annotation is missing. The
+agent otherwise runs as uid 100 and renders the file 0640, which the
+application's uid 10001 cannot read.
+
+**`ImagePullBackOff`** — the `ghcr-pull` secret is missing or its PAT lacks
+`read:packages`. The deploy workflow recreates it every run, so check
+`GHCR_PULL_TOKEN` first.
 
 **Certificate stuck in `False`** — DNS record missing, or Traefik cannot reach
 the ACME solver pod. The `allow-ingress-from-traefik` NetworkPolicy selects all
@@ -327,8 +514,12 @@ kubectl get challenge,order -n moomento
 **A pod cannot reach a dependency** — almost always a missing egress rule.
 `networkpolicies.yaml` is default-deny; there is one rule per allowed
 destination. To rule it out quickly, comment `networkpolicies.yaml` out of
-`kustomization.yaml`, re-apply, and confirm the traffic works before adding the
-proper rule.
+`base/kustomization.yaml`, re-apply, and confirm the traffic works before adding
+the proper rule.
 
-**Config change had no effect** — the ConfigMap has no name hash, so pods are
-not restarted automatically. `kubectl rollout restart` them.
+**The deploy workflow says a tag is not in GHCR** — the subproject's
+`docker-publish.yml` has not finished, or it never ran because the push went to a
+branch other than `main`/`develop`.
+
+**A subproject build is green but nothing deployed** — check its `Trigger
+deployment` job. A missing `DEPLOY_DISPATCH_TOKEN` fails exactly there.

@@ -1,0 +1,9 @@
+# Horizontal pod autoscaling for all three workloads.
+#
+# Requires metrics-server in the cluster. Pointless on a node that has no spare
+# memory for a second replica, so it is enabled per environment.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - hpa.yaml

@@ -1,45 +1,44 @@
 # =============================================================================
-#  THIS IS THE ONLY FILE YOU NORMALLY EDIT.
+#  PRODUCTION  -  main branch  ->  57.129.66.163 (ssh ovh)
+#
+#  THIS IS THE ONLY FILE YOU NORMALLY EDIT FOR THIS ENVIRONMENT.
 #
 #  Hostnames, image tags and every non-secret runtime value live here. The
-#  manifests in this directory read them from the generated `app-config`
-#  ConfigMap, and the Ingress hostnames are injected via `replacements` below.
+#  manifests in ../../base read them from the generated `app-config` ConfigMap,
+#  and the Ingress hostnames are injected via `replacements` below.
 #
-#  Secrets are NEVER stored here - they come from Vault (see vault/).
+#  Secrets are NEVER stored here - they come from Vault (see ../../vault/).
 # =============================================================================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 # Renaming this also requires updating, by hand:
-#   - the `moomento-deny-public@kubernetescrd` annotation in ingress.yaml
-#   - the bound service account namespaces in vault/bootstrap-vault.example.sh
+#   - the router.middlewares annotation patch further down this file
+#   - the bound service account namespaces in ../../vault/bootstrap-vault.example.sh
 namespace: moomento
 
 resources:
-  - namespace.yaml
-  - serviceaccounts.yaml
-  - backend.yaml
-  - frontend.yaml
-  - hosted.yaml
-  - ingress.yaml
-  - hpa.yaml
-  - servicemonitors.yaml
-  # Default-deny network model. Comment out to troubleshoot connectivity.
-  - networkpolicies.yaml
+  - ../../base
 
-labels:
-  - includeSelectors: false
-    pairs:
-      app.kubernetes.io/part-of: flashcards
-      app.kubernetes.io/managed-by: kustomize
+# Optional add-ons. Each has a comment at the top of its kustomization.yaml
+# explaining what it needs from the cluster.
+#
+# There is deliberately no Ingress for the backend. Only the frontend is
+# reachable from the internet; the API is a ClusterIP the frontend reaches
+# server-side. See "Request routing" in ../../README.md.
+components:
+  - ../../components/autoscaling
+  - ../../components/monitoring
 
 # -----------------------------------------------------------------------------
 #  Container images
 #
 #  Tags must be immutable - never `latest` (INFRASTRUCTURE.md rule 11). The CI
 #  workflow in each subproject publishes `sha-<short-sha>` and, for git tags,
-#  the semver. Bump a single service with:
+#  the semver. The deploy workflow rewrites these automatically; to bump one
+#  service by hand:
 #
+#    cd k8s/overlays/production
 #    kustomize edit set image flashcards-backend=*:sha-1a2b3c4
 # -----------------------------------------------------------------------------
 images:
@@ -56,22 +55,18 @@ images:
 # -----------------------------------------------------------------------------
 #  Runtime configuration
 #
-#  The name suffix hash is disabled because `replacements` below has to resolve
-#  this ConfigMap by a stable name. Consequence: editing a value does not
-#  restart the pods on its own - run
-#    kubectl rollout restart deploy/backend deploy/frontend deploy/hosted -n moomento
+#  The generated ConfigMap keeps kustomize's name suffix hash, so editing any
+#  value below changes the ConfigMap name, which changes the pod template, which
+#  rolls the pods. No `kubectl rollout restart` is needed. The `replacements`
+#  block further down still resolves it by the pre-hash name `app-config`.
 # -----------------------------------------------------------------------------
-generatorOptions:
-  disableNameSuffixHash: true
-
 configMapGenerator:
   - name: app-config
     literals:
-      # --- Public hostnames -------------------------------------------------
-      # Both need a Cloudflare A record -> 57.129.66.163 before the first
-      # apply, or the ACME http01 challenge will fail.
+      # --- Public hostname --------------------------------------------------
+      # Needs a Cloudflare A record -> 57.129.66.163 before the first apply, or
+      # the ACME http01 challenge will fail. This is the only public hostname.
       - INGRESS_APP_HOST=moomento.pl
-      - INGRESS_API_HOST=api.moomento.pl
 
       # --- Frontend ---------------------------------------------------------
       # host:port WITHOUT a scheme. next.config.ts assembles the server-side
@@ -85,8 +80,9 @@ configMapGenerator:
       - JWT_EXPIRATION=3600000
 
       # --- PostgreSQL (shared instance in the `database` namespace) ---------
-      # Dedicated database and role; create them with db/bootstrap-flashcards-db.sql
-      # before the first rollout. The password comes from Vault.
+      # Dedicated database and role; create them with
+      # ../../db/bootstrap-flashcards-db.sql before the first rollout.
+      # The password comes from Vault.
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgresql.database.svc.cluster.local:5432/flashcards
       - SPRING_DATASOURCE_USERNAME=flashcards_user
       # One PostgreSQL instance serves the whole cluster - keep the pool small.
@@ -95,7 +91,7 @@ configMapGenerator:
       - BACKEND_DB_POOL_MIN_IDLE=1
       # `update` matches the application default and lets Hibernate create the
       # schema on first boot. Switch to `validate` once real migrations exist -
-      # see the schema management note in README.md.
+      # see the schema management note in ../../README.md.
       - SPRING_JPA_HIBERNATE_DDL_AUTO=update
 
       # --- Kafka (shared instance, own namespace) ---------------------------
@@ -117,6 +113,18 @@ configMapGenerator:
       - SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true
 
 # -----------------------------------------------------------------------------
+#  Namespace-dependent values kustomize cannot derive on its own.
+# -----------------------------------------------------------------------------
+patches:
+  - target:
+      kind: Ingress
+      name: frontend-metrics-deny
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/traefik.ingress.kubernetes.io~1router.middlewares
+        value: moomento-deny-public@kubernetescrd
+
+# -----------------------------------------------------------------------------
 #  Keeps the Ingress rules and their TLS SANs in sync with the hostnames above.
 # -----------------------------------------------------------------------------
 replacements:
@@ -134,17 +142,6 @@ replacements:
       - select:
           kind: Ingress
           name: frontend-metrics-deny
-        fieldPaths:
-          - spec.rules.0.host
-          - spec.tls.0.hosts.0
-  - source:
-      kind: ConfigMap
-      name: app-config
-      fieldPath: data.INGRESS_API_HOST
-    targets:
-      - select:
-          kind: Ingress
-          name: backend
         fieldPaths:
           - spec.rules.0.host
           - spec.tls.0.hosts.0

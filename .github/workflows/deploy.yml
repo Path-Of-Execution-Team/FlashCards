@@ -1,0 +1,402 @@
+name: Deploy
+
+# main    -> production, 57.129.66.163 (ssh ovh),  namespace moomento
+# develop -> develop,    57.128.251.9  (ssh ovh2), namespace moomento-dev
+#
+# Which image tags get deployed
+# ----------------------------
+# This repository pins each subproject to an exact commit via git submodules,
+# and each subproject's CI publishes ghcr.io/<owner>/<image>:sha-<short-sha>.
+# So the tag to deploy is derivable from the submodule pointer - no manual
+# version bookkeeping, and the deployed state always matches this commit.
+#
+# repository_dispatch (sent by a subproject after it publishes an image) and
+# workflow_dispatch can override individual tags.
+
+on:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [develop, production]
+      backend_tag:
+        description: "Override backend tag (default: from submodule pointer)"
+        required: false
+        type: string
+      frontend_tag:
+        description: "Override frontend tag (default: from submodule pointer)"
+        required: false
+        type: string
+      hosted_tag:
+        description: "Override hosted tag (default: from submodule pointer)"
+        required: false
+        type: string
+  repository_dispatch:
+    types: [image-published]
+
+# Never run two deploys against the same environment at once, and never cancel
+# one half-way through a rollout.
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || github.event.client_payload.environment || github.ref }}
+  cancel-in-progress: false
+
+env:
+  KUSTOMIZE_VERSION: v5.7.1
+  KUBECONFORM_VERSION: 0.8.0
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Works out which environment this run targets, and which image tag each
+  # service should get. Kept separate so the result is visible in the run
+  # summary before anything touches a server.
+  # ---------------------------------------------------------------------------
+  resolve:
+    name: Resolve target
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.target.outputs.environment }}
+      ref: ${{ steps.target.outputs.ref }}
+      backend_tag: ${{ steps.tags.outputs.backend }}
+      frontend_tag: ${{ steps.tags.outputs.frontend }}
+      hosted_tag: ${{ steps.tags.outputs.hosted }}
+    steps:
+      # Deliberately before the checkout: this step only reads the event
+      # context, and its `ref` output decides what the checkout below fetches.
+      - id: target
+        name: Pick environment and ref from the trigger
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            workflow_dispatch)
+              env_name="${{ github.event.inputs.environment }}"
+              # Whatever branch the operator launched it from.
+              ref="${{ github.ref_name }}" ;;
+            repository_dispatch)
+              env_name="${{ github.event.client_payload.environment }}"
+              [ -n "$env_name" ] || env_name=develop
+              # A repository_dispatch always runs against the default branch,
+              # so github.ref_name is `main` no matter which environment the
+              # payload names. Checking out `main` for a develop deploy would
+              # pin the two services NOT named in the payload to main's
+              # submodule commits - i.e. ship production images to the dev
+              # cluster. Derive the branch from the environment instead.
+              case "$env_name" in
+                production) ref=main ;;
+                develop)    ref=develop ;;
+                *) echo "::error::client_payload.environment '$env_name' is neither production nor develop"; exit 1 ;;
+              esac ;;
+            push)
+              ref="${{ github.ref_name }}"
+              case "$ref" in
+                main)    env_name=production ;;
+                develop) env_name=develop ;;
+                *) echo "::error::branch $ref has no environment"; exit 1 ;;
+              esac ;;
+            *) echo "::error::unsupported event ${{ github.event_name }}"; exit 1 ;;
+          esac
+          {
+            echo "environment=$env_name"
+            echo "ref=$ref"
+          } >> "$GITHUB_OUTPUT"
+          echo "Deploying **$ref** to **$env_name**" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@v4
+        # Submodules are NOT cloned: the gitlink SHA is read straight out of the
+        # tree, which is all that is needed and avoids three extra clones.
+        with:
+          ref: ${{ steps.target.outputs.ref }}
+          submodules: false
+
+      - id: tags
+        name: Derive image tags from submodule pointers
+        run: |
+          set -euo pipefail
+          # git ls-tree prints the commit each submodule is pinned to. The image
+          # tag format comes from docker/metadata-action's
+          # `type=sha,prefix=sha-,format=short`, which is 7 hex characters.
+          pinned() {
+            git ls-tree HEAD "$1" | awk '{print $3}' | cut -c1-7
+          }
+
+          backend="${{ github.event.inputs.backend_tag }}"
+          frontend="${{ github.event.inputs.frontend_tag }}"
+          hosted="${{ github.event.inputs.hosted_tag }}"
+
+          # A repository_dispatch names exactly one service and its fresh tag.
+          case "${{ github.event.client_payload.service }}" in
+            backend)  backend="${{ github.event.client_payload.tag }}" ;;
+            frontend) frontend="${{ github.event.client_payload.tag }}" ;;
+            hosted)   hosted="${{ github.event.client_payload.tag }}" ;;
+          esac
+
+          [ -n "$backend" ]  || backend="sha-$(pinned source/FlashCardsBackend)"
+          [ -n "$frontend" ] || frontend="sha-$(pinned source/FlashCardsGUI)"
+          [ -n "$hosted" ]   || hosted="sha-$(pinned source/FlashCardsHostedServices)"
+
+          {
+            echo "backend=$backend"
+            echo "frontend=$frontend"
+            echo "hosted=$hosted"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo
+            echo "| service | tag |"
+            echo "|---|---|"
+            echo "| backend | \`$backend\` |"
+            echo "| frontend | \`$frontend\` |"
+            echo "| hosted | \`$hosted\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Renders the overlay and schema-checks it. No cluster and no credentials are
+  # involved, so a broken manifest fails here rather than half-way through a
+  # rollout.
+  # ---------------------------------------------------------------------------
+  render:
+    name: Render and validate manifests
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      # Same ref the tags were derived from, so the overlay and the image tags
+      # come from one commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+
+      - name: Install kustomize and kubeconform
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kustomize
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kustomize version
+          kubeconform -v
+
+      - name: Set image tags
+        working-directory: k8s/overlays/${{ needs.resolve.outputs.environment }}
+        run: |
+          set -euo pipefail
+          kustomize edit set image \
+            "flashcards-backend=*:${{ needs.resolve.outputs.backend_tag }}" \
+            "flashcards-frontend=*:${{ needs.resolve.outputs.frontend_tag }}" \
+            "flashcards-hosted=*:${{ needs.resolve.outputs.hosted_tag }}"
+
+      - name: Render
+        run: |
+          set -euo pipefail
+          kustomize build "k8s/overlays/${{ needs.resolve.outputs.environment }}" > rendered.yaml
+          echo "rendered $(grep -c '^kind:' rendered.yaml) resources"
+
+      - name: Validate against the Kubernetes schemas
+        run: |
+          set -euo pipefail
+          # -strict rejects unknown fields; the CRDs-catalog location resolves
+          # ServiceMonitor and Traefik's Middleware, which are not in the
+          # built-in schema set. Skipped resources are treated as a failure so
+          # an unresolvable CRD cannot pass silently.
+          kubeconform -summary -strict \
+            -kubernetes-version 1.32.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered.yaml | tee summary.txt
+          grep -q 'Invalid: 0, Errors: 0, Skipped: 0' summary.txt
+
+      - name: Confirm every image tag exists in GHCR
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Catches "the subproject's build has not finished / never ran" before
+          # the cluster turns it into an ImagePullBackOff.
+          fail=0
+          while read -r image; do
+            repo="${image%:*}"; repo="${repo#ghcr.io/}"
+            tag="${image##*:}"
+            token=$(curl -sSf -u "$GHCR_USER:$GHCR_TOKEN" \
+              "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" | jq -r .token)
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $token" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json' \
+              "https://ghcr.io/v2/${repo}/manifests/${tag}")
+            if [ "$code" = "200" ]; then
+              echo "  ok      $image"
+            else
+              echo "::error::$image is not in GHCR (HTTP $code) - has its build workflow finished?"
+              fail=1
+            fi
+          done < <(grep -oE 'ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+' rendered.yaml | sort -u)
+          exit "$fail"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rendered-${{ needs.resolve.outputs.environment }}
+          path: rendered.yaml
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Applies the rendered manifests over SSH. The kubeconfig never leaves the
+  # node: kubectl runs there, we only ship one YAML file.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to ${{ needs.resolve.outputs.environment }}
+    needs: [resolve, render]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.environment }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rendered-${{ needs.resolve.outputs.environment }}
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${SSH_PRIVATE_KEY:?repository secret SSH_PRIVATE_KEY is not set}"
+          : "${SSH_KNOWN_HOSTS:?repository variable SSH_KNOWN_HOSTS is not set}"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Pinned host keys, so StrictHostKeyChecking stays on and a hijacked
+          # DNS record cannot hand this key to someone else's server.
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host target
+            HostName ${{ vars.SSH_HOST }}
+            User ${{ vars.SSH_USER }}
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Check the cluster is reachable and Vault is unsealed
+        run: |
+          set -euo pipefail
+          ssh target 'kubectl version -o json >/dev/null && kubectl get nodes'
+          # Vault standalone comes back sealed after a reboot, and the pods would
+          # then hang in Init with no obvious cause. Say so up front.
+          if ! ssh target 'kubectl -n vault exec vault-0 -- vault status -format=json' | grep -q '"sealed": *false'; then
+            echo "::error::Vault on ${{ vars.SSH_HOST }} is sealed - unseal it first: kubectl -n vault exec -it vault-0 -- vault operator unseal"
+            exit 1
+          fi
+
+      - name: Ensure the namespace and the GHCR pull secret exist
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${GHCR_PULL_TOKEN:?repository secret GHCR_PULL_TOKEN is not set}"
+          ns='${{ vars.K8S_NAMESPACE }}'
+          # shellcheck disable=SC2029
+          ssh target "kubectl create namespace '$ns' --dry-run=client -o yaml | kubectl apply -f -"
+          # Refreshed on every deploy so a rotated token cannot leave the
+          # cluster unable to pull on the next pod restart. The token travels
+          # over the SSH stream rather than being written to a file on the node
+          # or echoed into the workflow log.
+          # shellcheck disable=SC2029
+          printf '%s' "$GHCR_PULL_TOKEN" | ssh target "
+            set -eu
+            token=\$(cat)
+            kubectl -n '$ns' create secret docker-registry ghcr-pull \
+              --docker-server=ghcr.io \
+              --docker-username='${{ github.actor }}' \
+              --docker-password=\"\$token\" \
+              --dry-run=client -o yaml | kubectl apply -f -" >/dev/null
+
+      - name: Copy the rendered manifests
+        run: |
+          set -euo pipefail
+          scp rendered.yaml target:/tmp/flashcards-deploy.yaml
+
+      - name: Server-side dry run
+        run: |
+          set -euo pipefail
+          # INFRASTRUCTURE.md rule 12: validate against the live API before
+          # applying. Catches missing CRDs, admission webhook rejections and
+          # immutable-field changes that offline schema checks cannot see.
+          ssh target 'kubectl apply --dry-run=server -f /tmp/flashcards-deploy.yaml'
+
+      - name: Apply
+        run: |
+          set -euo pipefail
+          # --force-conflicts is needed the first time a resource that was
+          # applied client-side is taken over by this field manager.
+          #
+          # No `rollout restart` afterwards: app-config carries kustomize's name
+          # suffix hash, so a changed config value changes the pod template and
+          # rolls the pods by itself. Adding a restart here would trigger a
+          # second, redundant rollout on top of the first.
+          ssh target 'kubectl apply --server-side --force-conflicts \
+            --field-manager=github-actions \
+            -f /tmp/flashcards-deploy.yaml'
+
+      - name: Wait for the rollout
+        id: rollout
+        run: |
+          set -euo pipefail
+          for d in backend frontend hosted; do
+            echo "::group::rollout $d"
+            # shellcheck disable=SC2029
+            ssh target "kubectl -n ${{ vars.K8S_NAMESPACE }} rollout status deployment/$d --timeout=8m"
+            echo "::endgroup::"
+          done
+
+      - name: Diagnostics and rollback on failure
+        if: failure()
+        run: |
+          set +e
+          ns='${{ vars.K8S_NAMESPACE }}'
+          echo "::group::pods"
+          # shellcheck disable=SC2029
+          ssh target "kubectl -n $ns get pods -o wide"
+          echo "::endgroup::"
+          echo "::group::events"
+          # shellcheck disable=SC2029
+          ssh target "kubectl -n $ns get events --sort-by=.lastTimestamp | tail -40"
+          echo "::endgroup::"
+          for d in backend frontend hosted; do
+            echo "::group::logs $d"
+            # shellcheck disable=SC2029
+            ssh target "kubectl -n $ns logs deployment/$d -c application --tail=100"
+            # Empty for the frontend, which has no Vault sidecar.
+            # shellcheck disable=SC2029
+            ssh target "kubectl -n $ns logs deployment/$d -c vault-agent-init --tail=30 2>/dev/null"
+            echo "::endgroup::"
+          done
+          echo "::group::rollback"
+          for d in backend frontend hosted; do
+            # shellcheck disable=SC2029
+            ssh target "kubectl -n $ns rollout undo deployment/$d"
+          done
+          for d in backend frontend hosted; do
+            # shellcheck disable=SC2029
+            ssh target "kubectl -n $ns rollout status deployment/$d --timeout=5m"
+          done
+          echo "::endgroup::"
+          echo "::warning::rollout failed; all three deployments were rolled back to the previous revision"
+
+      - name: Clean up
+        if: always()
+        run: ssh target 'rm -f /tmp/flashcards-deploy.yaml' || true
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "### Deployed to ${{ needs.resolve.outputs.environment }}"
+            echo
+            echo "- host: \`${{ vars.SSH_HOST }}\`"
+            echo "- namespace: \`${{ vars.K8S_NAMESPACE }}\`"
+            echo "- url: https://${{ vars.PUBLIC_HOST }}"
+          } >> "$GITHUB_STEP_SUMMARY"

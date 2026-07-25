@@ -1,0 +1,30 @@
+# Environment-agnostic manifests. Do not add a namespace, image tags,
+# hostnames or a ConfigMap here - those belong to the overlays so that each
+# environment has exactly one file to edit.
+#
+#   overlays/production -> main branch    -> 57.129.66.163 (ovh)
+#   overlays/develop    -> develop branch -> 57.128.251.9  (ovh2)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - backend.yaml
+  - frontend.yaml
+  - hosted.yaml
+  - ingress-frontend.yaml
+  # Default-deny network model. Comment out in an overlay's `patches` to
+  # troubleshoot connectivity - do not remove it here.
+  - networkpolicies.yaml
+
+# Pulled in per environment, because they are not wanted everywhere:
+#   ingress-api.yaml   - production only (develop keeps the API in-cluster)
+#   hpa.yaml           - production only (develop node has no headroom to scale)
+#   servicemonitors.yaml - production only (no Prometheus on the develop node)
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: flashcards
+      app.kubernetes.io/managed-by: kustomize

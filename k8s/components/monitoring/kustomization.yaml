@@ -1,0 +1,10 @@
+# Prometheus scrape configuration.
+#
+# Requires the ServiceMonitor CRD from kube-prometheus-stack. Applying it to a
+# cluster without that CRD fails the whole `kubectl apply`, so it is enabled
+# per environment.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - servicemonitors.yaml

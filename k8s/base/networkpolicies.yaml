@@ -37,7 +37,12 @@ spec:
 ---
 # Public traffic from the ingress controller. Applies to all pods in the
 # namespace on purpose: cert-manager creates temporary ACME http01 solver pods
-# here during certificate issuance and Traefik must be able to reach them.
+# here during certificate issuance and Traefik must be able to reach them, and
+# their labels are not known ahead of time.
+#
+# This does NOT make the backend publicly reachable. Traefik only forwards to
+# what an Ingress declares, and the only Ingress is the frontend's. The rule
+# grants reachability, not a route.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

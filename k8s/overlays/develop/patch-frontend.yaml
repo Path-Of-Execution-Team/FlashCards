@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  template:
+    spec:
+      containers:
+        - name: application
+          resources:
+            requests:
+              cpu: 75m
+              memory: 160Mi
+            limits:
+              cpu: 500m
+              memory: 320Mi
+          env:
+            # Node needs ~60-80Mi of RSS outside the JS heap, so the heap cap
+            # stays well under the 320Mi limit.
+            - name: NODE_OPTIONS
+              value: --max-old-space-size=200

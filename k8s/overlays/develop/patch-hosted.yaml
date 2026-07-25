@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hosted
+spec:
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/role: "moomento-dev-hosted"
+        vault.hashicorp.com/agent-inject-secret-hosted.properties: "secret/data/projects/moomento/develop/hosted"
+        vault.hashicorp.com/agent-inject-template-hosted.properties: |
+          {{- with secret "secret/data/projects/moomento/develop/hosted" -}}
+          spring.mail.username={{ .Data.data.MAIL_USERNAME }}
+          spring.mail.password={{ .Data.data.MAIL_PASSWORD }}
+          {{- end }}
+        vault.hashicorp.com/agent-requests-mem: "32Mi"
+        vault.hashicorp.com/agent-limits-mem: "64Mi"
+    spec:
+      containers:
+        - name: application
+          resources:
+            requests:
+              cpu: 75m
+              memory: 224Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -XX:MaxRAMPercentage=65.0
+                -XX:InitialRAMPercentage=30.0
+                -XX:+ExitOnOutOfMemoryError
+                -Djava.security.egd=file:/dev/./urandom
+            - name: SPRING_PROFILES_ACTIVE
+              value: dev
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60

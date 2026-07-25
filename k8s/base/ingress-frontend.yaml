@@ -1,9 +1,9 @@
-# Public entrypoints. Hosts below are defaults; kustomization.yaml is the
-# authoritative source and overwrites them via `replacements` from the
-# app-config ConfigMap (INGRESS_APP_HOST / INGRESS_API_HOST).
+# Public entrypoint for the web application. The host below is a placeholder;
+# each overlay's kustomization.yaml is the authoritative source and overwrites
+# it via `replacements` from the app-config ConfigMap (INGRESS_APP_HOST).
 #
-# Create the Cloudflare A records pointing at 57.129.66.163 BEFORE applying,
-# otherwise the ACME http01 challenge cannot complete.
+# Create the DNS A record pointing at the target node BEFORE applying, otherwise
+# the ACME http01 challenge cannot complete.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -17,10 +17,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - moomento.pl
+        - placeholder.invalid
       secretName: frontend-tls
   rules:
-    - host: moomento.pl
+    - host: placeholder.invalid
       http:
         paths:
           - path: /
@@ -44,20 +44,20 @@ metadata:
     app: frontend
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-    # Format is <namespace>-<middleware>@kubernetescrd. Not rewritten by the
-    # kustomize `namespace:` field - update it by hand if you rename the
-    # namespace.
-    traefik.ingress.kubernetes.io/router.middlewares: moomento-deny-public@kubernetescrd
+    # Format is <namespace>-<middleware>@kubernetescrd. The kustomize
+    # `namespace:` field does not rewrite annotation values, so every overlay
+    # patches this key with its own namespace.
+    traefik.ingress.kubernetes.io/router.middlewares: placeholder-deny-public@kubernetescrd
 spec:
   ingressClassName: traefik
   # Reuses the certificate issued by the frontend Ingress above; no
   # cert-manager annotation here so the certificate is not requested twice.
   tls:
     - hosts:
-        - moomento.pl
+        - placeholder.invalid
       secretName: frontend-tls
   rules:
-    - host: moomento.pl
+    - host: placeholder.invalid
       http:
         paths:
           - path: /metrics
@@ -65,37 +65,6 @@ spec:
             backend:
               service:
                 name: frontend
-                port:
-                  name: http
----
-# Only /api is published. /actuator (which exposes unauthenticated Prometheus
-# metrics and health detail) is deliberately NOT routed. If you need Swagger
-# from the internet, add /swagger-ui and /v3/api-docs paths here explicitly -
-# never a bare "/".
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: backend
-  labels:
-    app: backend
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-production
-    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-spec:
-  ingressClassName: traefik
-  tls:
-    - hosts:
-        - api.moomento.pl
-      secretName: backend-tls
-  rules:
-    - host: api.moomento.pl
-      http:
-        paths:
-          - path: /api
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
                 port:
                   name: http
 ---

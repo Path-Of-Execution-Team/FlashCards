@@ -1,0 +1,48 @@
+# Develop: Vault lives on the same node under the develop path, and the whole
+# node has 3.7Gi of RAM shared with PostgreSQL, Kafka and Vault.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/role: "moomento-dev-backend"
+        vault.hashicorp.com/agent-inject-secret-backend.properties: "secret/data/projects/moomento/develop/backend"
+        vault.hashicorp.com/agent-inject-template-backend.properties: |
+          {{- with secret "secret/data/projects/moomento/develop/backend" -}}
+          spring.datasource.password={{ .Data.data.SPRING_DATASOURCE_PASSWORD }}
+          jwt.secret={{ .Data.data.JWT_SECRET }}
+          {{- end }}
+        vault.hashicorp.com/agent-requests-mem: "32Mi"
+        vault.hashicorp.com/agent-limits-mem: "64Mi"
+    spec:
+      containers:
+        - name: application
+          resources:
+            requests:
+              cpu: 100m
+              memory: 320Mi
+            limits:
+              cpu: 800m
+              memory: 512Mi
+          env:
+            # 65% of a 512Mi limit is ~333Mi of heap, leaving room for
+            # metaspace, code cache and thread stacks.
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -XX:MaxRAMPercentage=65.0
+                -XX:InitialRAMPercentage=30.0
+                -XX:+ExitOnOutOfMemoryError
+                -Djava.security.egd=file:/dev/./urandom
+            - name: SPRING_PROFILES_ACTIVE
+              value: dev
+          # A cold JVM on 2 shared vCPU starts noticeably slower than on the
+          # production node.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
