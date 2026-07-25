@@ -5,6 +5,11 @@ injector:
   enabled: true
   replicas: 1
   affinity: ""
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   resources:
     requests:
       cpu: 25m
