@@ -7,7 +7,7 @@ It converges a single-node Ubuntu VPS into the Kubernetes substrate expected by
 the FlashCards manifests:
 
 - k3s `v1.36.2+k3s1`, with bundled Traefik disabled
-- Helm 3
+- Helm `v3.21.3`
 - Traefik `41.0.2`
 - cert-manager `v1.21.0` and `letsencrypt-production`
 - Vault `0.34.0` with the Agent Injector

@@ -1,19 +1,19 @@
-- name: Check if Helm is installed
-  ansible.builtin.shell: command -v helm
-  args:
-    executable: /bin/bash
-  register: helm_check
+- name: Check installed Helm version
+  ansible.builtin.command: helm version --short
+  register: helm_version_check
   failed_when: false
   changed_when: false
 
-- name: Install Helm
+- name: Install expected Helm version
   ansible.builtin.shell: |
     set -euo pipefail
-    curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 -o /tmp/get_helm.sh
+    chmod 700 /tmp/get_helm.sh
+    DESIRED_VERSION="{{ helm_version }}" /tmp/get_helm.sh
   args:
     executable: /bin/bash
   become: true
-  when: helm_check.rc != 0
+  when: helm_version_check.rc != 0 or helm_version not in helm_version_check.stdout
 
 - name: Add Helm repositories
   ansible.builtin.shell: helm repo add {{ item.name }} {{ item.url }} >/dev/null 2>&1 || true
