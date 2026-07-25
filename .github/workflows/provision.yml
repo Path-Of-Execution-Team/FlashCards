@@ -91,7 +91,7 @@ jobs:
           set -euo pipefail
           : "${SSH_HOST:?environment variable SSH_HOST is not set}"
           : "${SSH_USER:?environment variable SSH_USER is not set}"
-          cat > inventory.ci.yml <<YAML
+          cat > ansible/inventory.ci.yml <<YAML
           all:
             children:
               ${{ inputs.environment }}:
@@ -110,7 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           ansible-playbook \
-            -i inventory.ci.yml \
+            -i ansible/inventory.ci.yml \
             ansible/playbooks/provision.yml \
             -e "target_environment=${{ inputs.environment }}" \
             -e "vault_initialize=${{ inputs.vault_bootstrap }}" \
