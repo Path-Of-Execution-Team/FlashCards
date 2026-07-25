@@ -1,0 +1,205 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+      annotations:
+        # Vault Agent Injector. The vault-agent-init container blocks pod
+        # startup until /vault/secrets/backend.properties has been rendered,
+        # so no extra wait-for-vault initContainer is needed.
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/service: "http://vault.vault.svc.cluster.local:8200"
+        vault.hashicorp.com/role: "moomento-backend"
+        vault.hashicorp.com/agent-inject-secret-backend.properties: "secret/data/projects/moomento/production/backend"
+        vault.hashicorp.com/agent-inject-template-backend.properties: |
+          {{- with secret "secret/data/projects/moomento/production/backend" -}}
+          spring.datasource.password={{ .Data.data.SPRING_DATASOURCE_PASSWORD }}
+          jwt.secret={{ .Data.data.JWT_SECRET }}
+          {{- end }}
+        # Without this the agent runs as uid 100 and writes the secret file
+        # 0640 root-of-its-own, which uid 10001 below cannot read. Runs the
+        # agent as the application container's user instead.
+        vault.hashicorp.com/agent-run-as-same-user: "true"
+        vault.hashicorp.com/agent-requests-cpu: "25m"
+        vault.hashicorp.com/agent-requests-mem: "48Mi"
+        vault.hashicorp.com/agent-limits-cpu: "100m"
+        vault.hashicorp.com/agent-limits-mem: "96Mi"
+    spec:
+      serviceAccountName: backend
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: application
+          image: flashcards-backend
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # Heap is derived from the container memory limit; keep headroom for
+            # metaspace, threads and direct buffers on an 8Gi single node.
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -XX:MaxRAMPercentage=70.0
+                -XX:InitialRAMPercentage=40.0
+                -XX:+ExitOnOutOfMemoryError
+                -Djava.security.egd=file:/dev/./urandom
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+            - name: SERVER_PORT
+              value: "8080"
+            - name: SPRING_DOCKER_COMPOSE_ENABLED
+              value: "false"
+            # Vault-rendered properties; an additional location outranks the
+            # packaged classpath:application.properties.
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+              value: file:/vault/secrets/backend.properties
+            # Labels used by logback-spring.xml for structured JSON logs that
+            # Alloy ships to Loki.
+            - name: APP_NAME
+              value: backend
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_DATASOURCE_URL
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_DATASOURCE_USERNAME
+            - name: SPRING_JPA_HIBERNATE_DDL_AUTO
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_JPA_HIBERNATE_DDL_AUTO
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: BACKEND_DB_POOL_MAX
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: BACKEND_DB_POOL_MIN_IDLE
+            - name: JWT_EXPIRATION
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: JWT_EXPIRATION
+            - name: ALLOWED_ORIGINS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: BACKEND_ALLOWED_ORIGINS
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_KAFKA_BOOTSTRAP_SERVERS
+            - name: SPRING_KAFKA_CONSUMER_GROUP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: BACKEND_KAFKA_CONSUMER_GROUP_ID
+            - name: SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: BACKEND_KAFKA_CONSUMER_AUTO_OFFSET_RESET
+            - name: SPRING_KAFKA_PRODUCER_ACKS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: BACKEND_KAFKA_PRODUCER_ACKS
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

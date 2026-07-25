@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: moomento
+  labels:
+    app.kubernetes.io/part-of: flashcards
+    # Consumed by NetworkPolicies in other namespaces if they ever need to
+    # select this one by label instead of by name.
+    kubernetes.io/metadata.name: moomento

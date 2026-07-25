@@ -1,0 +1,150 @@
+# =============================================================================
+#  THIS IS THE ONLY FILE YOU NORMALLY EDIT.
+#
+#  Hostnames, image tags and every non-secret runtime value live here. The
+#  manifests in this directory read them from the generated `app-config`
+#  ConfigMap, and the Ingress hostnames are injected via `replacements` below.
+#
+#  Secrets are NEVER stored here - they come from Vault (see vault/).
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Renaming this also requires updating, by hand:
+#   - the `moomento-deny-public@kubernetescrd` annotation in ingress.yaml
+#   - the bound service account namespaces in vault/bootstrap-vault.example.sh
+namespace: moomento
+
+resources:
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - backend.yaml
+  - frontend.yaml
+  - hosted.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - servicemonitors.yaml
+  # Default-deny network model. Comment out to troubleshoot connectivity.
+  - networkpolicies.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: flashcards
+      app.kubernetes.io/managed-by: kustomize
+
+# -----------------------------------------------------------------------------
+#  Container images
+#
+#  Tags must be immutable - never `latest` (INFRASTRUCTURE.md rule 11). The CI
+#  workflow in each subproject publishes `sha-<short-sha>` and, for git tags,
+#  the semver. Bump a single service with:
+#
+#    kustomize edit set image flashcards-backend=*:sha-1a2b3c4
+# -----------------------------------------------------------------------------
+images:
+  - name: flashcards-backend
+    newName: ghcr.io/path-of-execution-team/flashcards-backend
+    newTag: "0.1.0"
+  - name: flashcards-frontend
+    newName: ghcr.io/path-of-execution-team/flashcards-gui
+    newTag: "0.1.0"
+  - name: flashcards-hosted
+    newName: ghcr.io/path-of-execution-team/flashcards-hosted
+    newTag: "0.1.0"
+
+# -----------------------------------------------------------------------------
+#  Runtime configuration
+#
+#  The name suffix hash is disabled because `replacements` below has to resolve
+#  this ConfigMap by a stable name. Consequence: editing a value does not
+#  restart the pods on its own - run
+#    kubectl rollout restart deploy/backend deploy/frontend deploy/hosted -n moomento
+# -----------------------------------------------------------------------------
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: app-config
+    literals:
+      # --- Public hostnames -------------------------------------------------
+      # Both need a Cloudflare A record -> 57.129.66.163 before the first
+      # apply, or the ACME http01 challenge will fail.
+      - INGRESS_APP_HOST=moomento.pl
+      - INGRESS_API_HOST=api.moomento.pl
+
+      # --- Frontend ---------------------------------------------------------
+      # host:port WITHOUT a scheme. next.config.ts assembles the server-side
+      # rewrite as http://${NEXT_PUBLIC_API_URL}/api/:path* , so browsers only
+      # ever talk to INGRESS_APP_HOST and the API hop stays inside the cluster.
+      - NEXT_PUBLIC_API_URL=backend:8080
+      - METRICS_BUCKETS=50,100,300,1000,2000,3000
+
+      # --- Backend ----------------------------------------------------------
+      - BACKEND_ALLOWED_ORIGINS=https://moomento.pl
+      - JWT_EXPIRATION=3600000
+
+      # --- PostgreSQL (shared instance in the `database` namespace) ---------
+      # Dedicated database and role; create them with db/bootstrap-flashcards-db.sql
+      # before the first rollout. The password comes from Vault.
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgresql.database.svc.cluster.local:5432/flashcards
+      - SPRING_DATASOURCE_USERNAME=flashcards_user
+      # One PostgreSQL instance serves the whole cluster - keep the pool small.
+      # Worst case = BACKEND_DB_POOL_MAX x backend HPA maxReplicas.
+      - BACKEND_DB_POOL_MAX=5
+      - BACKEND_DB_POOL_MIN_IDLE=1
+      # `update` matches the application default and lets Hibernate create the
+      # schema on first boot. Switch to `validate` once real migrations exist -
+      # see the schema management note in README.md.
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+
+      # --- Kafka (shared instance, own namespace) ---------------------------
+      # Must agree with the namespace selector in the allow-kafka-egress
+      # NetworkPolicy.
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka.kafka.svc.cluster.local:9092
+      - BACKEND_KAFKA_CONSUMER_GROUP_ID=flashcards-backend
+      - BACKEND_KAFKA_CONSUMER_AUTO_OFFSET_RESET=earliest
+      - BACKEND_KAFKA_PRODUCER_ACKS=all
+      - HOSTED_KAFKA_CONSUMER_GROUP_ID=hosted-service-group
+      - HOSTED_KAFKA_CONSUMER_AUTO_OFFSET_RESET=earliest
+      - APP_KAFKA_DEMO_TOPIC=flashcards-demo-topic
+
+      # --- Outbound mail ----------------------------------------------------
+      # Credentials are injected from Vault, only the endpoint is configured here.
+      - SPRING_MAIL_HOST=smtp.example.com
+      - SPRING_MAIL_PORT=587
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true
+
+# -----------------------------------------------------------------------------
+#  Keeps the Ingress rules and their TLS SANs in sync with the hostnames above.
+# -----------------------------------------------------------------------------
+replacements:
+  - source:
+      kind: ConfigMap
+      name: app-config
+      fieldPath: data.INGRESS_APP_HOST
+    targets:
+      - select:
+          kind: Ingress
+          name: frontend
+        fieldPaths:
+          - spec.rules.0.host
+          - spec.tls.0.hosts.0
+      - select:
+          kind: Ingress
+          name: frontend-metrics-deny
+        fieldPaths:
+          - spec.rules.0.host
+          - spec.tls.0.hosts.0
+  - source:
+      kind: ConfigMap
+      name: app-config
+      fieldPath: data.INGRESS_API_HOST
+    targets:
+      - select:
+          kind: Ingress
+          name: backend
+        fieldPaths:
+          - spec.rules.0.host
+          - spec.tls.0.hosts.0

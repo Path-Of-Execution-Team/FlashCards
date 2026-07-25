@@ -1,0 +1,185 @@
+# FlashCardsHostedServices is a stateless Kafka consumer + mail sender, so this
+# is a Deployment rather than a StatefulSet: no stable identity or PVC is needed
+# and rolling updates are simpler.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hosted
+  labels:
+    app: hosted
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: hosted
+  template:
+    metadata:
+      labels:
+        app: hosted
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/service: "http://vault.vault.svc.cluster.local:8200"
+        vault.hashicorp.com/role: "moomento-hosted"
+        vault.hashicorp.com/agent-inject-secret-hosted.properties: "secret/data/projects/moomento/production/hosted"
+        vault.hashicorp.com/agent-inject-template-hosted.properties: |
+          {{- with secret "secret/data/projects/moomento/production/hosted" -}}
+          spring.mail.username={{ .Data.data.MAIL_USERNAME }}
+          spring.mail.password={{ .Data.data.MAIL_PASSWORD }}
+          {{- end }}
+        # Without this the agent runs as uid 100 and writes the secret file
+        # 0640 root-of-its-own, which uid 10001 below cannot read. Runs the
+        # agent as the application container's user instead.
+        vault.hashicorp.com/agent-run-as-same-user: "true"
+        vault.hashicorp.com/agent-requests-cpu: "25m"
+        vault.hashicorp.com/agent-requests-mem: "48Mi"
+        vault.hashicorp.com/agent-limits-cpu: "100m"
+        vault.hashicorp.com/agent-limits-mem: "96Mi"
+    spec:
+      serviceAccountName: hosted
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      # Give in-flight Kafka records time to commit before SIGKILL.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: application
+          image: flashcards-hosted
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 600m
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -XX:MaxRAMPercentage=70.0
+                -XX:InitialRAMPercentage=40.0
+                -XX:+ExitOnOutOfMemoryError
+                -Djava.security.egd=file:/dev/./urandom
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+            - name: SERVER_PORT
+              value: "8081"
+            - name: SPRING_DOCKER_COMPOSE_ENABLED
+              value: "false"
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+              value: file:/vault/secrets/hosted.properties
+            - name: APP_NAME
+              value: hosted
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_KAFKA_BOOTSTRAP_SERVERS
+            - name: SPRING_KAFKA_CONSUMER_GROUP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: HOSTED_KAFKA_CONSUMER_GROUP_ID
+            - name: SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: HOSTED_KAFKA_CONSUMER_AUTO_OFFSET_RESET
+            - name: APP_KAFKA_DEMO_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: APP_KAFKA_DEMO_TOPIC
+            - name: SPRING_MAIL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_MAIL_HOST
+            - name: SPRING_MAIL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_MAIL_PORT
+            - name: SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH
+            - name: SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hosted
+  labels:
+    app: hosted
+spec:
+  type: ClusterIP
+  selector:
+    app: hosted
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+      protocol: TCP

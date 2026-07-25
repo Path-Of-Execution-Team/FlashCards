@@ -1,0 +1,62 @@
+# Prometheus discovers ServiceMonitors outside the monitoring Helm release, but
+# the `release: monitoring` label is kept so these still match if
+# serviceMonitorSelector is ever tightened to the Helm default.
+#
+# Both Spring services expose metrics on their main HTTP port
+# (/actuator/prometheus), so there is no separate `metrics` port - the endpoint
+# references the `http` port by name instead.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend
+  labels:
+    app: backend
+    release: monitoring
+    app.kubernetes.io/part-of: flashcards
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: hosted
+  labels:
+    app: hosted
+    release: monitoring
+    app.kubernetes.io/part-of: flashcards
+spec:
+  selector:
+    matchLabels:
+      app: hosted
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+---
+# /metrics is rewritten to the /api/metrics route handler by next.config.ts and
+# served by prom-client with the frontend_ prefix.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+    release: monitoring
+    app.kubernetes.io/part-of: flashcards
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

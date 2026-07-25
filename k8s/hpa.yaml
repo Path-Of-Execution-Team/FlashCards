@@ -1,0 +1,100 @@
+# maxReplicas are deliberately small: this is one 4 vCPU / 8Gi node that also
+# runs PostgreSQL, Vault, Traefik and the whole kube-prometheus-stack. Raise
+# them only after checking `k top nodes` headroom.
+#
+# ContainerResource targets the "application" container so the injected
+# vault-agent sidecar does not dilute the measured utilisation.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 1
+  maxReplicas: 3
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: application
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  minReplicas: 1
+  maxReplicas: 3
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: application
+        target:
+          type: Utilization
+          averageUtilization: 65
+---
+# Scaling past the partition count of the consumed topics only adds idle
+# consumers, so this one stays at 2.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hosted
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hosted
+  minReplicas: 1
+  maxReplicas: 2
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 180
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: application
+        target:
+          type: Utilization
+          averageUtilization: 75
