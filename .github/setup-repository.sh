@@ -74,6 +74,11 @@ done
 log "Setting repository variable SSH_KNOWN_HOSTS"
 printf '%s' "$known_hosts" | gh variable set SSH_KNOWN_HOSTS --repo "$ROOT_REPO"
 
+log "Setting repository variable GHCR_PULL_USER"
+ghcr_pull_user=$(gh api user --jq .login)
+gh variable set GHCR_PULL_USER --repo "$ROOT_REPO" --body "$ghcr_pull_user"
+echo "  $ghcr_pull_user"
+
 # -----------------------------------------------------------------------------
 # Deploy key. The same private key already used by the `ovh` / `ovh2` ssh
 # aliases, so no new key needs to be authorised on either node.
@@ -129,13 +134,15 @@ if [ ! -t 0 ]; then
   from a terminal, or set the two tokens individually:
 
     gh secret set GHCR_PULL_TOKEN --repo $ROOT_REPO
+    gh variable set GHCR_PULL_USER --repo $ROOT_REPO --body <token-owner-login>
 $(printf '    gh secret set DEPLOY_DISPATCH_TOKEN --repo %s\n' "${SUB_REPOS[@]}")
 MSG
 else
   log "GHCR pull token"
   cat >&2 <<'MSG'
-  A classic PAT with read:packages ONLY. Used by the deploy workflow to refresh
-  the in-cluster `ghcr-pull` secret so the nodes can pull private images.
+  A classic PAT with read:packages ONLY, owned by the GHCR_PULL_USER printed
+  above. Used by the deploy workflow to refresh the in-cluster `ghcr-pull`
+  secret so the nodes can pull private images.
   Create at: https://github.com/settings/tokens
 MSG
   ghcr_token=$(read_secret "  GHCR_PULL_TOKEN: ")

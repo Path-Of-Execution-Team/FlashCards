@@ -540,9 +540,11 @@ jobs:
 
       - name: Ensure the namespace and the GHCR pull secret exist
         env:
+          GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER }}
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
           set -euo pipefail
+          : "${GHCR_PULL_USER:?repository variable GHCR_PULL_USER is not set}"
           : "${GHCR_PULL_TOKEN:?repository secret GHCR_PULL_TOKEN is not set}"
           ns='${{ vars.K8S_NAMESPACE }}'
           # shellcheck disable=SC2029
@@ -557,7 +559,7 @@ jobs:
             token=\$(cat)
             kubectl -n '$ns' create secret docker-registry ghcr-pull \
               --docker-server=ghcr.io \
-              --docker-username='${{ github.actor }}' \
+              --docker-username='$GHCR_PULL_USER' \
               --docker-password=\"\$token\" \
               --dry-run=client -o yaml | kubectl apply -f -" >/dev/null
 

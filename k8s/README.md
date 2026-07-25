@@ -164,8 +164,9 @@ Set once, on `Path-Of-Execution-Team/FlashCards`:
 | Kind | Name | Value |
 |---|---|---|
 | secret | `SSH_PRIVATE_KEY` | deploy key accepted by both nodes |
-| secret | `GHCR_PULL_TOKEN` | classic PAT, `read:packages` only |
+| secret | `GHCR_PULL_TOKEN` | classic PAT, `read:packages` only, owned by `GHCR_PULL_USER` |
 | variable | `SSH_KNOWN_HOSTS` | `ssh-keyscan` output for both hosts — public data, so a variable rather than a secret, which keeps it unmasked in logs |
+| variable | `GHCR_PULL_USER` | GitHub username that owns `GHCR_PULL_TOKEN`; used as the Docker username in the in-cluster GHCR pull secret |
 
 Then one [GitHub Environment](https://github.com/Path-Of-Execution-Team/FlashCards/settings/environments)
 per target, each with four variables:
