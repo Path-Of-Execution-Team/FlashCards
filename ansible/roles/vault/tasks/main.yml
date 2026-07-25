@@ -14,6 +14,12 @@
   environment:
     KUBECONFIG: "{{ kubeconfig_path }}"
 
+- name: Wait for Vault injector rollout
+  ansible.builtin.command: kubectl -n {{ vault_namespace }} rollout status deployment/vault-agent-injector --timeout=300s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+
 - name: Wait for vault-0 to exist
   ansible.builtin.command: kubectl -n {{ vault_namespace }} get pod vault-0
   environment:
