@@ -36,6 +36,21 @@
   ansible.builtin.command: kubectl apply -f {{ provision_remote_dir }}/postgresql.yaml
   environment:
     KUBECONFIG: "{{ kubeconfig_path }}"
+  register: postgres_apply
+  failed_when:
+    - postgres_apply.rc != 0
+    - "'Forbidden: updates to statefulset spec' not in postgres_apply.stderr"
+
+- name: Recreate PostgreSQL StatefulSet on immutable spec drift
+  ansible.builtin.shell: |
+    set -euo pipefail
+    kubectl -n {{ postgres_namespace }} delete statefulset postgresql --cascade=orphan --ignore-not-found
+    kubectl apply -f {{ provision_remote_dir }}/postgresql.yaml
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  when: postgres_apply.rc != 0
 
 - name: Create Kafka namespace
   ansible.builtin.shell: kubectl create namespace {{ kafka_namespace }} --dry-run=client -o yaml | kubectl apply -f -
@@ -55,6 +70,21 @@
   ansible.builtin.command: kubectl apply -f {{ provision_remote_dir }}/kafka.yaml
   environment:
     KUBECONFIG: "{{ kubeconfig_path }}"
+  register: kafka_apply
+  failed_when:
+    - kafka_apply.rc != 0
+    - "'Forbidden: updates to statefulset spec' not in kafka_apply.stderr"
+
+- name: Recreate Kafka StatefulSet on immutable spec drift
+  ansible.builtin.shell: |
+    set -euo pipefail
+    kubectl -n {{ kafka_namespace }} delete statefulset kafka --cascade=orphan --ignore-not-found
+    kubectl apply -f {{ provision_remote_dir }}/kafka.yaml
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  when: kafka_apply.rc != 0
 
 - name: Wait for PostgreSQL
   ansible.builtin.command: kubectl -n {{ postgres_namespace }} rollout status statefulset/postgresql --timeout=300s
