@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ui
+  namespace: {{ kafka_namespace }}
+spec:
+  selector:
+    app: kafka-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-ui
+  namespace: {{ kafka_namespace }}
+spec:
+  replicas: {{ kafka_ui_replicas }}
+  selector:
+    matchLabels:
+      app: kafka-ui
+  template:
+    metadata:
+      labels:
+        app: kafka-ui
+    spec:
+      containers:
+        - name: kafka-ui
+          image: {{ kafka_ui_image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: KAFKA_CLUSTERS_0_NAME
+              value: {{ target_environment }}-kafka
+            - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
+              value: {{ kafka_service_name }}.{{ kafka_namespace }}.svc.cluster.local:9092
+            - name: DYNAMIC_CONFIG_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: {{ kafka_ui_request_cpu }}
+              memory: {{ kafka_ui_request_memory }}
+            limits:
+              cpu: {{ kafka_ui_limit_cpu }}
+              memory: {{ kafka_ui_limit_memory }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: kafka-ui-auth
+  namespace: {{ kafka_namespace }}
+spec:
+  basicAuth:
+    secret: {{ kafka_ui_basic_auth_secret }}
+    removeHeader: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kafka-ui
+  namespace: {{ kafka_namespace }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ cluster_issuer_name }}
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.middlewares: {{ kafka_namespace }}-kafka-ui-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ kafka_ui_host }}
+      secretName: {{ kafka_ui_tls_secret_name }}
+  rules:
+    - host: {{ kafka_ui_host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kafka-ui
+                port:
+                  number: 80

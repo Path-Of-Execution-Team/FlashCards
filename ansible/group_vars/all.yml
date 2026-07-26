@@ -1,5 +1,6 @@
 k3s_version: v1.36.2+k3s1
 helm_version: v3.21.3
+k9s_version: v0.51.0
 traefik_chart_version: 41.0.2
 cert_manager_chart_version: v1.21.0
 vault_chart_version: 0.34.0
@@ -13,6 +14,7 @@ cluster_issuer_name: letsencrypt-production
 provision_remote_dir: /tmp/flashcards-ansible
 kubeconfig_path: "{{ ansible_env.HOME }}/.kube/config"
 node_min_memory_mb: 3000
+default_text_editor: mcedit
 
 app_namespace: moomento
 
@@ -38,6 +40,16 @@ vault_initialize: false
 vault_unseal_from_node_file: false
 vault_configure_kubernetes_auth: false
 vault_required_unsealed: true
+vault_userpass_enabled: true
+vault_userpass_username: bosman
+vault_userpass_policy_name: flashcards-admin
+vault_userpass_password_file: /root/vault-userpass-bosman.txt
+vault_pseudo_auto_unseal_enabled: true
+vault_pseudo_auto_unseal_require_key: false
+vault_auto_unseal_secret_name: vault-auto-unseal
+vault_auto_unseal_secret_key_prefix: unseal-key
+vault_auto_unseal_image: hashicorp/vault:2.0.3
+vault_auto_unseal_schedule: "* * * * *"
 
 app_bootstrap: false
 app_bootstrap_require_credentials: false
@@ -66,3 +78,16 @@ kafka_heap_opts: -Xms256m -Xmx256m
 kafka_log_retention_hours: "24"
 kafka_log_retention_bytes: "1073741824"
 kafka_log_segment_bytes: "134217728"
+
+kafka_ui_enabled: true
+kafka_ui_image: kafbat/kafka-ui:v1.5.0
+kafka_ui_replicas: 1
+kafka_ui_host: kafka.bosman.top
+kafka_ui_tls_secret_name: kafka-bosman-top-tls
+kafka_ui_basic_auth_secret: kafka-ui-basic-auth
+kafka_ui_basic_auth_user: bosman
+kafka_ui_basic_auth_password_file: /root/kafka-ui-basic-auth.txt
+kafka_ui_request_cpu: 50m
+kafka_ui_request_memory: 192Mi
+kafka_ui_limit_cpu: 500m
+kafka_ui_limit_memory: 512Mi

@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-auto-unseal
+  namespace: {{ vault_namespace }}
+spec:
+  schedule: "{{ vault_auto_unseal_schedule }}"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: vault-auto-unseal
+              image: {{ vault_auto_unseal_image }}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: VAULT_ADDR
+                  value: http://vault.{{ vault_namespace }}.svc.cluster.local:8200
+              command:
+                - /bin/sh
+                - -ec
+              args:
+                - |
+                  for key_file in /vault-unseal/{{ vault_auto_unseal_secret_key_prefix }}-*; do
+                    [ -f "$key_file" ] || continue
+                    status="$(vault status -format=json 2>/dev/null || true)"
+                    echo "$status" | grep -q '"sealed": *true' || exit 0
+                    vault operator unseal "$(cat "$key_file")" >/dev/null || true
+                  done
+                  status="$(vault status -format=json 2>/dev/null || true)"
+                  echo "$status" | grep -q '"sealed": *false'
+              volumeMounts:
+                - name: unseal-key
+                  mountPath: /vault-unseal
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+          volumes:
+            - name: unseal-key
+              secret:
+                secretName: {{ vault_auto_unseal_secret_name }}
+                defaultMode: 0400

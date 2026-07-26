@@ -16,3 +16,6 @@ vault_unseal_from_node_file: false
 vault_configure_kubernetes_auth: false
 vault_key_shares: 5
 vault_key_threshold: 3
+
+kafka_ui_host: kafka.bosman.top
+kafka_ui_tls_secret_name: kafka-bosman-top-tls

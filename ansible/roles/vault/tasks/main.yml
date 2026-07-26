@@ -73,12 +73,146 @@
   failed_when: false
   changed_when: false
 
+- name: Check Vault pseudo auto-unseal secret
+  ansible.builtin.command: kubectl -n {{ vault_namespace }} get secret {{ vault_auto_unseal_secret_name }}
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: vault_auto_unseal_secret
+  failed_when: false
+  changed_when: false
+  when: vault_pseudo_auto_unseal_enabled | bool
+
+- name: Create Vault pseudo auto-unseal secret from workflow secret
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      tmp="$(mktemp -d)"
+      trap 'rm -rf "$tmp"' EXIT
+      raw_keys="${VAULT_UNSEAL_KEYS:-${VAULT_UNSEAL_KEY:-}}"
+      declare -a secret_args=()
+      i=0
+      while IFS= read -r key; do
+        [ -n "$key" ] || continue
+        i=$((i + 1))
+        key_file="$tmp/{{ vault_auto_unseal_secret_key_prefix }}-${i}"
+        printf '%s' "$key" > "$key_file"
+        secret_args+=("--from-file={{ vault_auto_unseal_secret_key_prefix }}-${i}=${key_file}")
+      done < <(printf '%s\n' "$raw_keys" | tr ',' '\n')
+      [ "$i" -gt 0 ]
+      kubectl -n {{ vault_namespace }} create secret generic {{ vault_auto_unseal_secret_name }} "${secret_args[@]}"
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+    VAULT_UNSEAL_KEYS: "{{ lookup('env', 'VAULT_UNSEAL_KEYS') | default('', true) }}"
+    VAULT_UNSEAL_KEY: "{{ lookup('env', 'VAULT_UNSEAL_KEY') | default('', true) }}"
+  no_log: true
+  when:
+    - vault_pseudo_auto_unseal_enabled | bool
+    - vault_auto_unseal_secret.rc != 0
+    - (lookup('env', 'VAULT_UNSEAL_KEYS') | default('', true) | length > 0) or (lookup('env', 'VAULT_UNSEAL_KEY') | default('', true) | length > 0)
+
+- name: Create Vault pseudo auto-unseal secret from node init file
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      tmp="$(mktemp -d)"
+      trap 'rm -rf "$tmp"' EXIT
+      python3 -c 'import json; [print(k) for k in json.load(open("/root/vault-init.json", encoding="utf-8"))["unseal_keys_b64"]]' > "$tmp/keys"
+      declare -a secret_args=()
+      i=0
+      while IFS= read -r key; do
+        [ -n "$key" ] || continue
+        i=$((i + 1))
+        key_file="$tmp/{{ vault_auto_unseal_secret_key_prefix }}-${i}"
+        printf '%s' "$key" > "$key_file"
+        secret_args+=("--from-file={{ vault_auto_unseal_secret_key_prefix }}-${i}=${key_file}")
+      done < "$tmp/keys"
+      [ "$i" -gt 0 ]
+      kubectl -n {{ vault_namespace }} create secret generic {{ vault_auto_unseal_secret_name }} "${secret_args[@]}"
+  args:
+    executable: /bin/bash
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  no_log: true
+  when:
+    - vault_pseudo_auto_unseal_enabled | bool
+    - vault_auto_unseal_secret.rc != 0
+    - lookup('env', 'VAULT_UNSEAL_KEYS') | default('', true) | length == 0
+    - lookup('env', 'VAULT_UNSEAL_KEY') | default('', true) | length == 0
+    - vault_init_file.stat.exists
+
+- name: Re-check Vault pseudo auto-unseal secret
+  ansible.builtin.command: kubectl -n {{ vault_namespace }} get secret {{ vault_auto_unseal_secret_name }}
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: vault_auto_unseal_secret
+  failed_when: false
+  changed_when: false
+  when: vault_pseudo_auto_unseal_enabled | bool
+
+- name: Refuse pseudo auto-unseal without an unseal key
+  ansible.builtin.fail:
+    msg: >-
+      Vault pseudo auto-unseal is enabled but {{ vault_auto_unseal_secret_name }}
+      does not exist. Set VAULT_UNSEAL_KEYS or run once while
+      /root/vault-init.json still exists on the node.
+  when:
+    - vault_pseudo_auto_unseal_enabled | bool
+    - vault_pseudo_auto_unseal_require_key | bool
+    - vault_auto_unseal_secret.rc != 0
+
+- name: Render Vault pseudo auto-unseal CronJob
+  ansible.builtin.template:
+    src: vault-auto-unseal.yaml.j2
+    dest: "{{ provision_remote_dir }}/vault-auto-unseal.yaml"
+    mode: "0600"
+  when:
+    - vault_pseudo_auto_unseal_enabled | bool
+    - vault_auto_unseal_secret.rc == 0
+
+- name: Apply Vault pseudo auto-unseal CronJob
+  ansible.builtin.command: kubectl apply -f {{ provision_remote_dir }}/vault-auto-unseal.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  when:
+    - vault_pseudo_auto_unseal_enabled | bool
+    - vault_auto_unseal_secret.rc == 0
+
+- name: Try to unseal Vault from pseudo auto-unseal secret
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      kubectl -n {{ vault_namespace }} get secret {{ vault_auto_unseal_secret_name }} -o json \
+        | python3 -c 'import base64, json, sys; data=json.load(sys.stdin).get("data", {}); [print(base64.b64decode(data[k]).decode("utf-8")) for k in sorted(data)]' \
+        | while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            status="$(kubectl -n {{ vault_namespace }} exec vault-0 -- vault status -format=json 2>/dev/null || true)"
+            echo "$status" | grep -q '"sealed": *true' || exit 0
+            printf '%s\n' "$key" | kubectl -n {{ vault_namespace }} exec -i vault-0 -- vault operator unseal - >/dev/null || true
+          done
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  no_log: true
+  when:
+    - vault_pseudo_auto_unseal_enabled | bool
+    - vault_auto_unseal_secret.rc == 0
+    - vault_sealed_status.stdout | default("true") != "false"
+
 - name: Unseal Vault from the node-owned init file
-  ansible.builtin.shell: |
-    set -euo pipefail
-    grep -o '"unseal_keys_b64":\["[^"]*' /root/vault-init.json \
-      | sed 's/.*\["//' \
-      | kubectl -n {{ vault_namespace }} exec -i vault-0 -- vault operator unseal - >/dev/null
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      python3 -c 'import json; [print(k) for k in json.load(open("/root/vault-init.json", encoding="utf-8"))["unseal_keys_b64"]]' \
+        | while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            status="$(kubectl -n {{ vault_namespace }} exec vault-0 -- vault status -format=json 2>/dev/null || true)"
+            echo "$status" | grep -q '"sealed": *true' || exit 0
+            printf '%s\n' "$key" | kubectl -n {{ vault_namespace }} exec -i vault-0 -- vault operator unseal - >/dev/null || true
+          done
   args:
     executable: /bin/bash
   become: true
@@ -90,11 +224,99 @@
     - vault_sealed_status.stdout | default("true") != "false"
     - vault_init_file.stat.exists
 
+- name: Re-read Vault sealed status after optional unseal
+  ansible.builtin.shell: |
+    set -o pipefail
+    kubectl -n {{ vault_namespace }} exec vault-0 -- vault status -format=json 2>/dev/null \
+      | grep -o '"sealed": *[a-z]*' | awk '{print $2}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: vault_sealed_status
+  failed_when: false
+  changed_when: false
+
+- name: Check whether Vault admin token is available
+  ansible.builtin.set_fact:
+    vault_admin_token_available: "{{ (lookup('env', 'VAULT_BOOTSTRAP_TOKEN') | default('', true) | length > 0) or vault_init_file.stat.exists }}"
+
+- name: Check Vault userpass generated password file
+  ansible.builtin.stat:
+    path: "{{ vault_userpass_password_file }}"
+  become: true
+  register: vault_userpass_password_file_state
+  when: vault_userpass_enabled | bool
+
+- name: Configure Vault userpass auth
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      token="${VAULT_BOOTSTRAP_TOKEN:-}"
+      if [ -z "$token" ]; then
+        token="$(python3 -c 'import json; print(json.load(open("/root/vault-init.json", encoding="utf-8"))["root_token"])')"
+      fi
+
+      run_vault() {
+        kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${token}" vault "$@"
+      }
+
+      if run_vault auth list -format=json | grep -q '"userpass/"'; then
+        echo "userpass_auth=existing"
+      else
+        run_vault auth enable userpass >/dev/null
+        echo "userpass_auth=created"
+      fi
+
+      printf '%s\n' \
+        'path "*" {' \
+        '  capabilities = ["create", "read", "update", "delete", "list", "sudo"]' \
+        '}' \
+        | run_vault policy write "{{ vault_userpass_policy_name }}" - >/dev/null
+      echo "userpass_policy=applied"
+
+      user_exists=0
+      run_vault read "auth/userpass/users/{{ vault_userpass_username }}" >/dev/null 2>&1 || user_exists=1
+
+      password="${VAULT_USERPASS_PASSWORD:-}"
+      if [ -z "$password" ] && test -s "{{ vault_userpass_password_file }}"; then
+        password="$(cat "{{ vault_userpass_password_file }}")"
+      fi
+      if [ -z "$password" ] && [ "$user_exists" -ne 0 ]; then
+        password="$(openssl rand -base64 24)"
+        printf '%s' "$password" > "{{ vault_userpass_password_file }}"
+        chmod 600 "{{ vault_userpass_password_file }}"
+      fi
+
+      if [ -n "$password" ]; then
+        run_vault write "auth/userpass/users/{{ vault_userpass_username }}" \
+          password="$password" \
+          policies="{{ vault_userpass_policy_name }}" >/dev/null
+        echo "userpass_user=applied"
+      else
+        echo "userpass_user=existing_password_unmanaged"
+      fi
+  args:
+    executable: /bin/bash
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+    VAULT_BOOTSTRAP_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_TOKEN') | default('', true) }}"
+    VAULT_USERPASS_PASSWORD: "{{ lookup('env', 'VAULT_USERPASS_PASSWORD') | default('', true) }}"
+  register: vault_userpass_result
+  changed_when: "'=created' in vault_userpass_result.stdout or 'userpass_user=applied' in vault_userpass_result.stdout"
+  no_log: true
+  when:
+    - vault_userpass_enabled | bool
+    - vault_sealed_status.stdout | default("true") == "false"
+    - vault_admin_token_available | bool
+    - vault_init_file.stat.exists or (vault_userpass_password_file_state.stat.exists | default(false)) or (lookup('env', 'VAULT_USERPASS_PASSWORD') | default('', true) | length > 0)
+
 - name: Configure Vault kv-v2 and Kubernetes auth
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
-      token="$(grep -o '"root_token":"[^"]*' /root/vault-init.json | cut -d'"' -f4)"
+      token="$(python3 -c 'import json; print(json.load(open("/root/vault-init.json", encoding="utf-8"))["root_token"])')"
 
       if ! kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${token}" \
         vault secrets list -format=json | grep -q '"secret/"'; then

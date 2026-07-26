@@ -21,12 +21,57 @@
     name:
       - ca-certificates
       - curl
+      - less
+      - mc
       - openssl
       - python3
       - tar
     state: present
     update_cache: true
   become: true
+
+- name: Register mcedit as the default editor
+  ansible.builtin.command: update-alternatives --install /usr/bin/editor editor /usr/bin/mcedit 50
+  become: true
+  changed_when: false
+
+- name: Set mcedit as the default editor
+  ansible.builtin.command: update-alternatives --set editor /usr/bin/mcedit
+  become: true
+  changed_when: false
+
+- name: Configure interactive shell defaults
+  ansible.builtin.copy:
+    dest: /etc/profile.d/flashcards-shell.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by FlashCards Ansible provisioning.
+      alias k=kubectl
+      export EDITOR={{ default_text_editor }}
+      export VISUAL={{ default_text_editor }}
+  become: true
+
+- name: Check installed k9s version
+  ansible.builtin.command: k9s version --short
+  register: k9s_version_check
+  failed_when: false
+  changed_when: false
+
+- name: Install expected k9s version
+  ansible.builtin.shell: |
+    set -euo pipefail
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    curl -sfL "https://github.com/derailed/k9s/releases/download/{{ k9s_version }}/k9s_Linux_amd64.tar.gz" \
+      -o "$tmp/k9s.tar.gz"
+    tar -xzf "$tmp/k9s.tar.gz" -C "$tmp" k9s
+    install -m 0755 "$tmp/k9s" /usr/local/bin/k9s
+  args:
+    executable: /bin/bash
+  become: true
+  when: k9s_version_check.rc != 0 or k9s_version not in k9s_version_check.stdout
 
 - name: Create remote working directory
   ansible.builtin.file:

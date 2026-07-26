@@ -166,6 +166,11 @@ Set once, on `Path-Of-Execution-Team/FlashCards`:
 | secret | `SSH_PRIVATE_KEY` | deploy key accepted by both nodes |
 | secret | `GHCR_PULL_TOKEN` | classic PAT, `read:packages` only, owned by `GHCR_PULL_USER` |
 | secret | `VAULT_BOOTSTRAP_TOKEN` | optional; lets Ansible create missing app Vault secrets/roles after `/root/vault-init.json` has been removed |
+| secret | `VAULT_UNSEAL_KEYS` | optional; newline- or comma-separated unseal keys for the pseudo auto-unseal CronJob |
+| secret | `VAULT_UNSEAL_KEY` | optional; single-key fallback for one-share environments |
+| secret | `VAULT_USERPASS_PASSWORD` | optional; password for Vault userpass login as `bosman` |
+| secret | `KAFKA_UI_BASIC_AUTH_USER` | optional; defaults to `bosman` |
+| secret | `KAFKA_UI_BASIC_AUTH_PASSWORD` | optional; generated on the node if missing |
 | variable | `SSH_KNOWN_HOSTS` | `ssh-keyscan` output for both hosts — public data, so a variable rather than a secret, which keeps it unmasked in logs |
 | variable | `GHCR_PULL_USER` | GitHub username that owns `GHCR_PULL_TOKEN`; used as the Docker username in the in-cluster GHCR pull secret |
 
@@ -178,6 +183,23 @@ bootstrap:
 | `FLASHCARDS_JWT_SECRET` | generated random 256-bit hex secret |
 | `FLASHCARDS_MAIL_USERNAME` | `placeholder@moomento.invalid` |
 | `FLASHCARDS_MAIL_PASSWORD` | generated random placeholder password |
+
+Kafka UI BasicAuth is created once. If no password secret is provided, Ansible
+generates one and writes it only on the node at `/root/kafka-ui-basic-auth.txt`.
+
+Vault userpass is enabled for username `bosman`. If no
+`VAULT_USERPASS_PASSWORD` is provided during first bootstrap while
+`/root/vault-init.json` is still present, Ansible generates a password and
+writes it only on the node at `/root/vault-userpass-bosman.txt`. Existing
+environments where the init file has already been removed should set
+`VAULT_USERPASS_PASSWORD` once to create or rotate the user.
+
+Pseudo auto-unseal is created from `VAULT_UNSEAL_KEYS`, `VAULT_UNSEAL_KEY`, or,
+during first bootstrap, from `/root/vault-init.json`. It stores the unseal keys
+in the Kubernetes secret `vault/vault-auto-unseal` and runs a CronJob that
+unseals Vault after restarts. Production has threshold `3`, so it needs at least
+three valid keys if the node init file has already been removed. This is a
+convenience tradeoff for the single-node setup.
 
 The generated values are written to Vault only when the target path does not
 exist yet. Re-running the workflow does not rotate live secrets. PostgreSQL is
@@ -204,6 +226,10 @@ path "sys/auth/kubernetes" {
   capabilities = ["create", "read", "update", "sudo"]
 }
 
+path "sys/auth/userpass" {
+  capabilities = ["create", "read", "update", "sudo"]
+}
+
 path "auth/kubernetes/config" {
   capabilities = ["create", "read", "update"]
 }
@@ -213,6 +239,14 @@ path "auth/kubernetes/role/moomento*" {
 }
 
 path "sys/policies/acl/moomento*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+path "sys/policies/acl/flashcards-admin" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+path "auth/userpass/users/*" {
   capabilities = ["create", "read", "update", "delete", "list"]
 }
 
@@ -319,6 +353,7 @@ public API hostname.
 
 ```
 moomento.pl        A  57.129.66.163
+kafka.bosman.top   A  57.129.66.163
 ```
 
 **2. Vault policies, roles and secrets.**
@@ -432,7 +467,8 @@ hang in `Init:0/1` until you unseal it:
 kubectl -n vault exec -it vault-0 -- vault operator unseal
 ```
 
-Add DNS `dev.moomento.pl A 57.128.251.9`, then push to `develop`.
+Add DNS `dev.moomento.pl A 57.128.251.9` and
+`kafka-dev.bosman.top A 57.128.251.9`, then push to `develop`.
 
 ## Configuration
 

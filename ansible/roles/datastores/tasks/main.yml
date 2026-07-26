@@ -86,6 +86,54 @@
     KUBECONFIG: "{{ kubeconfig_path }}"
   when: kafka_apply.rc != 0
 
+- name: Check Kafka UI basic auth secret
+  ansible.builtin.command: kubectl -n {{ kafka_namespace }} get secret {{ kafka_ui_basic_auth_secret }}
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: kafka_ui_basic_auth
+  failed_when: false
+  changed_when: false
+  when: kafka_ui_enabled | bool
+
+- name: Create Kafka UI basic auth secret once
+  ansible.builtin.shell: |
+    set -euo pipefail
+    user="${KAFKA_UI_BASIC_AUTH_USER:-{{ kafka_ui_basic_auth_user }}}"
+    password="${KAFKA_UI_BASIC_AUTH_PASSWORD:-}"
+    if [ -z "$password" ]; then
+      password="$(openssl rand -base64 24)"
+      install -m 0600 -o root -g root /dev/null "{{ kafka_ui_basic_auth_password_file }}"
+      printf 'url=https://{{ kafka_ui_host }}\nusername=%s\npassword=%s\n' "$user" "$password" \
+        > "{{ kafka_ui_basic_auth_password_file }}"
+    fi
+    hash="$(openssl passwd -apr1 "$password")"
+    kubectl -n {{ kafka_namespace }} create secret generic {{ kafka_ui_basic_auth_secret }} \
+      --from-literal=users="${user}:${hash}"
+  args:
+    executable: /bin/bash
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+    KAFKA_UI_BASIC_AUTH_USER: "{{ lookup('env', 'KAFKA_UI_BASIC_AUTH_USER') | default('', true) }}"
+    KAFKA_UI_BASIC_AUTH_PASSWORD: "{{ lookup('env', 'KAFKA_UI_BASIC_AUTH_PASSWORD') | default('', true) }}"
+  no_log: true
+  when:
+    - kafka_ui_enabled | bool
+    - kafka_ui_basic_auth.rc != 0
+
+- name: Render Kafka UI manifest
+  ansible.builtin.template:
+    src: kafka-ui.yaml.j2
+    dest: "{{ provision_remote_dir }}/kafka-ui.yaml"
+    mode: "0600"
+  when: kafka_ui_enabled | bool
+
+- name: Apply Kafka UI manifest
+  ansible.builtin.command: kubectl apply -f {{ provision_remote_dir }}/kafka-ui.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  when: kafka_ui_enabled | bool
+
 - name: Wait for PostgreSQL
   ansible.builtin.command: kubectl -n {{ postgres_namespace }} rollout status statefulset/postgresql --timeout=300s
   environment:
@@ -97,3 +145,10 @@
   environment:
     KUBECONFIG: "{{ kubeconfig_path }}"
   changed_when: false
+
+- name: Wait for Kafka UI
+  ansible.builtin.command: kubectl -n {{ kafka_namespace }} rollout status deployment/kafka-ui --timeout=300s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+  when: kafka_ui_enabled | bool
