@@ -195,6 +195,7 @@ Remaining manual steps
 1. DNS (Cloudflare, SSL/TLS mode Full (strict)). Only the frontend is public,
    so there is one record per environment and no API hostname:
      moomento.pl      A  $PROD_HOST
+     www.moomento.pl  CNAME  moomento.pl
      dev.moomento.pl  A  $DEV_HOST
 2. Provision the develop node:
      python -m pip install -r ansible/requirements.txt

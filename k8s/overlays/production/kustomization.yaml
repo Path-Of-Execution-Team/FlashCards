@@ -19,6 +19,7 @@ namespace: moomento
 
 resources:
   - ../../base
+  - ingress-www.yaml
 
 # Optional add-ons. Each has a comment at the top of its kustomization.yaml
 # explaining what it needs from the cluster.

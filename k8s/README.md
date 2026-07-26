@@ -371,8 +371,9 @@ challenge cannot complete. SSL/TLS mode `Full (strict)`. One record — there is
 public API hostname.
 
 ```
-moomento.pl        A  57.129.66.163
-kafka.bosman.top   A  57.129.66.163
+moomento.pl        A      57.129.66.163
+www.moomento.pl    CNAME  moomento.pl
+kafka.bosman.top   A      57.129.66.163
 ```
 
 **2. Vault policies, roles and secrets.**
