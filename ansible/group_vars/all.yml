@@ -39,6 +39,13 @@ vault_unseal_from_node_file: false
 vault_configure_kubernetes_auth: false
 vault_required_unsealed: true
 
+app_bootstrap: false
+app_bootstrap_require_credentials: false
+app_project: moomento
+app_db_name: flashcards
+app_db_user: flashcards_user
+app_bootstrap_summary_path: "{{ provision_remote_dir }}/app-bootstrap-summary.txt"
+
 postgres_namespace: database
 postgres_service_name: postgresql
 postgres_superuser_secret: postgresql-superuser

@@ -336,6 +336,8 @@ jobs:
       ref: ${{ needs.resolve.outputs.ref }}
       vault_bootstrap: false
       vault_required_unsealed: ${{ needs.resolve.outputs.needs_vault == 'true' }}
+      app_bootstrap: ${{ needs.resolve.outputs.needs_vault == 'true' }}
+      app_bootstrap_require_credentials: false
     secrets: inherit
 
   # ---------------------------------------------------------------------------

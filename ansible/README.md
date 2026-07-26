@@ -14,6 +14,8 @@ the FlashCards manifests:
 - PostgreSQL `postgres:18.3-bookworm` in namespace `database`
 - Kafka `apache/kafka:4.3.1` in namespace `kafka`
 - the target application namespace
+- optional application bootstrap: Vault policies/roles, missing app secrets and
+  the `flashcards_user` PostgreSQL role/database
 
 ## Run From Your Machine
 
@@ -48,3 +50,19 @@ repository secret and environment variables as deploy:
 The deploy workflow calls it before rendering and applying the app manifests.
 CI passes `vault_initialize=false`, so a fresh or sealed Vault fails early
 instead of creating secrets during an application deploy.
+
+When `app_bootstrap=true`, the playbook also creates missing application
+credentials. It needs either:
+
+- `VAULT_BOOTSTRAP_TOKEN` in the workflow environment, or
+- `/root/vault-init.json` still present on the node during first bootstrap.
+
+Optional environment secrets can override the generated first values:
+
+- `FLASHCARDS_DB_PASSWORD`
+- `FLASHCARDS_JWT_SECRET`
+- `FLASHCARDS_MAIL_USERNAME`
+- `FLASHCARDS_MAIL_PASSWORD`
+
+Existing Vault secret paths are left untouched. The PostgreSQL role is always
+synced to the password currently stored in Vault.

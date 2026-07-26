@@ -21,6 +21,16 @@ on:
         required: false
         type: boolean
         default: true
+      app_bootstrap:
+        description: Create missing app Vault secrets, Vault roles and PostgreSQL role
+        required: false
+        type: boolean
+        default: false
+      app_bootstrap_require_credentials:
+        description: Fail if app bootstrap is requested but Vault credentials are unavailable
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       environment:
@@ -42,6 +52,16 @@ on:
         required: true
         type: boolean
         default: true
+      app_bootstrap:
+        description: Create missing app Vault secrets, Vault roles and PostgreSQL role
+        required: true
+        type: boolean
+        default: false
+      app_bootstrap_require_credentials:
+        description: Fail if app bootstrap is requested but Vault credentials are unavailable
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: provision-${{ inputs.environment }}
@@ -107,6 +127,11 @@ jobs:
         env:
           ANSIBLE_CONFIG: ansible/ansible.cfg
           ANSIBLE_HOST_KEY_CHECKING: "True"
+          VAULT_BOOTSTRAP_TOKEN: ${{ secrets.VAULT_BOOTSTRAP_TOKEN }}
+          FLASHCARDS_DB_PASSWORD: ${{ secrets.FLASHCARDS_DB_PASSWORD }}
+          FLASHCARDS_JWT_SECRET: ${{ secrets.FLASHCARDS_JWT_SECRET }}
+          FLASHCARDS_MAIL_USERNAME: ${{ secrets.FLASHCARDS_MAIL_USERNAME }}
+          FLASHCARDS_MAIL_PASSWORD: ${{ secrets.FLASHCARDS_MAIL_PASSWORD }}
         run: |
           set -euo pipefail
           ansible-playbook \
@@ -116,4 +141,6 @@ jobs:
             -e "vault_initialize=${{ inputs.vault_bootstrap }}" \
             -e "vault_unseal_from_node_file=${{ inputs.vault_bootstrap }}" \
             -e "vault_configure_kubernetes_auth=${{ inputs.vault_bootstrap }}" \
-            -e "vault_required_unsealed=${{ inputs.vault_required_unsealed }}"
+            -e "vault_required_unsealed=${{ inputs.vault_required_unsealed }}" \
+            -e "app_bootstrap=${{ inputs.app_bootstrap }}" \
+            -e "app_bootstrap_require_credentials=${{ inputs.app_bootstrap_require_credentials }}"

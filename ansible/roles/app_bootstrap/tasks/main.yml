@@ -1,0 +1,216 @@
+- name: Check whether the node still has Vault init output
+  ansible.builtin.stat:
+    path: /root/vault-init.json
+  become: true
+  register: app_bootstrap_vault_init_file
+  when: app_bootstrap | bool
+
+- name: Decide whether application bootstrap can run
+  ansible.builtin.set_fact:
+    app_bootstrap_has_token: "{{ lookup('env', 'VAULT_BOOTSTRAP_TOKEN') | default('', true) | length > 0 }}"
+    app_bootstrap_has_node_init_file: "{{ app_bootstrap_vault_init_file.stat.exists | default(false) }}"
+  when: app_bootstrap | bool
+
+- name: Refuse required application bootstrap without Vault credentials
+  ansible.builtin.fail:
+    msg: >-
+      Application bootstrap needs a Vault admin token. Set the environment
+      secret VAULT_BOOTSTRAP_TOKEN, or run once while /root/vault-init.json
+      still exists on the node.
+  when:
+    - app_bootstrap | bool
+    - app_bootstrap_require_credentials | bool
+    - not (app_bootstrap_has_token | default(false))
+    - not (app_bootstrap_has_node_init_file | default(false))
+
+- name: Skip application bootstrap without Vault credentials
+  ansible.builtin.debug:
+    msg: >-
+      Skipping application secret bootstrap because VAULT_BOOTSTRAP_TOKEN is not
+      set and /root/vault-init.json is not present. Existing Vault-managed
+      deployments can still proceed; missing app secrets must be created by an
+      admin or by rerunning provisioning with VAULT_BOOTSTRAP_TOKEN.
+  when:
+    - app_bootstrap | bool
+    - not (app_bootstrap_require_credentials | bool)
+    - not (app_bootstrap_has_token | default(false))
+    - not (app_bootstrap_has_node_init_file | default(false))
+
+- name: Bootstrap application Vault secrets and PostgreSQL role
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+
+      changed=0
+      summary="{{ app_bootstrap_summary_path }}"
+      : > "${summary}"
+
+      project="{{ app_project }}"
+      environment_name="{{ target_environment }}"
+      namespace="{{ app_namespace }}"
+      base="secret/projects/${project}/${environment_name}"
+      backend_role="${namespace}-backend"
+      hosted_role="${namespace}-hosted"
+
+      vault_token="${VAULT_BOOTSTRAP_TOKEN:-}"
+      if [ -z "${vault_token}" ]; then
+        vault_token="$(sudo grep -o '"root_token":"[^"]*' /root/vault-init.json | cut -d'"' -f4)"
+      fi
+
+      run_vault() {
+        kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${vault_token}" vault "$@"
+      }
+
+      run_vault_sh() {
+        kubectl -n {{ vault_namespace }} exec -i vault-0 -- env "VAULT_TOKEN=${vault_token}" sh -c "$1"
+      }
+
+      if ! kubectl -n {{ vault_namespace }} exec vault-0 -- vault status -format=json | grep -q '"sealed": *false'; then
+        echo "vault=sealed" >> "${summary}"
+        exit 1
+      fi
+      echo "vault=unsealed" >> "${summary}"
+
+      if run_vault secrets list -format=json | grep -q '"secret/"'; then
+        echo "kv=existing" >> "${summary}"
+      else
+        run_vault secrets enable -path=secret -version=2 kv >/dev/null
+        echo "kv=created" >> "${summary}"
+        changed=1
+      fi
+
+      if run_vault auth list -format=json | grep -q '"kubernetes/"'; then
+        echo "kubernetes_auth=existing" >> "${summary}"
+      else
+        run_vault auth enable kubernetes >/dev/null
+        echo "kubernetes_auth=created" >> "${summary}"
+        changed=1
+      fi
+
+      run_vault_sh 'vault write auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443" token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' >/dev/null
+      echo "kubernetes_auth_config=applied" >> "${summary}"
+
+      printf '%s\n' \
+        "path \"secret/data/projects/${project}/${environment_name}/backend\" {" \
+        '  capabilities = ["read"]' \
+        '}' \
+        '' \
+        "path \"secret/metadata/projects/${project}/${environment_name}/backend\" {" \
+        '  capabilities = ["read", "list"]' \
+        '}' \
+        | run_vault policy write "${backend_role}" - >/dev/null
+
+      printf '%s\n' \
+        "path \"secret/data/projects/${project}/${environment_name}/hosted\" {" \
+        '  capabilities = ["read"]' \
+        '}' \
+        '' \
+        "path \"secret/metadata/projects/${project}/${environment_name}/hosted\" {" \
+        '  capabilities = ["read", "list"]' \
+        '}' \
+        | run_vault policy write "${hosted_role}" - >/dev/null
+      echo "policies=applied" >> "${summary}"
+
+      run_vault write "auth/kubernetes/role/${backend_role}" \
+        bound_service_account_names=backend \
+        bound_service_account_namespaces="${namespace}" \
+        token_policies="${backend_role}" \
+        token_ttl=1h \
+        token_max_ttl=24h >/dev/null
+
+      run_vault write "auth/kubernetes/role/${hosted_role}" \
+        bound_service_account_names=hosted \
+        bound_service_account_namespaces="${namespace}" \
+        token_policies="${hosted_role}" \
+        token_ttl=1h \
+        token_max_ttl=24h >/dev/null
+      echo "kubernetes_roles=applied" >> "${summary}"
+
+      if run_vault kv get "${base}/backend" >/dev/null 2>&1; then
+        db_password="$(run_vault kv get -field=SPRING_DATASOURCE_PASSWORD "${base}/backend")"
+        echo "backend_secret=existing" >> "${summary}"
+      else
+        db_password="${FLASHCARDS_DB_PASSWORD:-$(openssl rand -hex 24)}"
+        jwt_secret="${FLASHCARDS_JWT_SECRET:-$(openssl rand -hex 32)}"
+        run_vault kv put "${base}/backend" \
+          SPRING_DATASOURCE_PASSWORD="${db_password}" \
+          JWT_SECRET="${jwt_secret}" >/dev/null
+        echo "backend_secret=created" >> "${summary}"
+        changed=1
+      fi
+
+      if run_vault kv get "${base}/hosted" >/dev/null 2>&1; then
+        echo "hosted_secret=existing" >> "${summary}"
+      else
+        mail_username="${FLASHCARDS_MAIL_USERNAME:-placeholder@${project}.invalid}"
+        mail_password="${FLASHCARDS_MAIL_PASSWORD:-$(openssl rand -hex 24)}"
+        run_vault kv put "${base}/hosted" \
+          MAIL_USERNAME="${mail_username}" \
+          MAIL_PASSWORD="${mail_password}" >/dev/null
+        echo "hosted_secret=created" >> "${summary}"
+        changed=1
+      fi
+
+      postgres_password="$(kubectl -n {{ postgres_namespace }} get secret {{ postgres_superuser_secret }} -o jsonpath='{.data.password}' | base64 -d)"
+      printf '%s\n' \
+        '\set ON_ERROR_STOP on' \
+        '' \
+        "SELECT 'CREATE ROLE {{ app_db_user }} LOGIN'" \
+        "WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ app_db_user }}')" \
+        '\gexec' \
+        '' \
+        "ALTER ROLE {{ app_db_user }} WITH LOGIN PASSWORD :'flashcards_password';" \
+        "ALTER ROLE {{ app_db_user }}" \
+        "  NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;" \
+        '' \
+        "SELECT 'CREATE DATABASE {{ app_db_name }} OWNER {{ app_db_user }} '" \
+        "       'ENCODING ''UTF8'' TEMPLATE template0'" \
+        "WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '{{ app_db_name }}')" \
+        '\gexec' \
+        '' \
+        "REVOKE ALL ON DATABASE {{ app_db_name }} FROM PUBLIC;" \
+        "GRANT CONNECT, TEMPORARY ON DATABASE {{ app_db_name }} TO {{ app_db_user }};" \
+        '' \
+        '\connect {{ app_db_name }}' \
+        '' \
+        "ALTER SCHEMA public OWNER TO {{ app_db_user }};" \
+        "REVOKE ALL ON SCHEMA public FROM PUBLIC;" \
+        "GRANT USAGE, CREATE ON SCHEMA public TO {{ app_db_user }};" \
+        | kubectl -n {{ postgres_namespace }} exec -i postgresql-0 -- env PGPASSWORD="${postgres_password}" \
+            psql -U postgres -d postgres -v "flashcards_password=${db_password}" >/dev/null
+      echo "postgres_role=applied" >> "${summary}"
+
+      if [ "${changed}" -eq 1 ]; then
+        echo "changed=true"
+      else
+        echo "changed=false"
+      fi
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+    VAULT_BOOTSTRAP_TOKEN: "{{ lookup('env', 'VAULT_BOOTSTRAP_TOKEN') | default('', true) }}"
+    FLASHCARDS_DB_PASSWORD: "{{ lookup('env', 'FLASHCARDS_DB_PASSWORD') | default('', true) }}"
+    FLASHCARDS_JWT_SECRET: "{{ lookup('env', 'FLASHCARDS_JWT_SECRET') | default('', true) }}"
+    FLASHCARDS_MAIL_USERNAME: "{{ lookup('env', 'FLASHCARDS_MAIL_USERNAME') | default('', true) }}"
+    FLASHCARDS_MAIL_PASSWORD: "{{ lookup('env', 'FLASHCARDS_MAIL_PASSWORD') | default('', true) }}"
+  register: app_bootstrap_result
+  changed_when: "'changed=true' in app_bootstrap_result.stdout"
+  no_log: true
+  when:
+    - app_bootstrap | bool
+    - (app_bootstrap_has_token | default(false)) or (app_bootstrap_has_node_init_file | default(false))
+
+- name: Read application bootstrap summary
+  ansible.builtin.command: cat {{ app_bootstrap_summary_path }}
+  register: app_bootstrap_summary
+  changed_when: false
+  when:
+    - app_bootstrap | bool
+    - (app_bootstrap_has_token | default(false)) or (app_bootstrap_has_node_init_file | default(false))
+
+- name: Show application bootstrap summary
+  ansible.builtin.debug:
+    var: app_bootstrap_summary.stdout_lines
+  when:
+    - app_bootstrap | bool
+    - (app_bootstrap_has_token | default(false)) or (app_bootstrap_has_node_init_file | default(false))

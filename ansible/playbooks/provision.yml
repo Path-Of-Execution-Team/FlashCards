@@ -18,3 +18,4 @@
     - vault
     - datastores
     - app_namespace
+    - app_bootstrap

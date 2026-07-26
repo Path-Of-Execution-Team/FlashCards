@@ -165,8 +165,24 @@ Set once, on `Path-Of-Execution-Team/FlashCards`:
 |---|---|---|
 | secret | `SSH_PRIVATE_KEY` | deploy key accepted by both nodes |
 | secret | `GHCR_PULL_TOKEN` | classic PAT, `read:packages` only, owned by `GHCR_PULL_USER` |
+| secret | `VAULT_BOOTSTRAP_TOKEN` | optional; lets Ansible create missing app Vault secrets/roles after `/root/vault-init.json` has been removed |
 | variable | `SSH_KNOWN_HOSTS` | `ssh-keyscan` output for both hosts — public data, so a variable rather than a secret, which keeps it unmasked in logs |
 | variable | `GHCR_PULL_USER` | GitHub username that owns `GHCR_PULL_TOKEN`; used as the Docker username in the in-cluster GHCR pull secret |
+
+Optional environment or repository secrets used only for the first application
+bootstrap:
+
+| Secret | Default if missing |
+|---|---|
+| `FLASHCARDS_DB_PASSWORD` | generated random password |
+| `FLASHCARDS_JWT_SECRET` | generated random 256-bit hex secret |
+| `FLASHCARDS_MAIL_USERNAME` | `placeholder@moomento.invalid` |
+| `FLASHCARDS_MAIL_PASSWORD` | generated random placeholder password |
+
+The generated values are written to Vault only when the target path does not
+exist yet. Re-running the workflow does not rotate live secrets. PostgreSQL is
+then synced to the password stored in Vault, so a later admin rotation is:
+change the Vault backend password, then run provisioning/deploy again.
 
 Then one [GitHub Environment](https://github.com/Path-Of-Execution-Team/FlashCards/settings/environments)
 per target, each with four variables:
@@ -255,6 +271,14 @@ moomento.pl        A  57.129.66.163
 
 **2. Vault policies, roles and secrets.**
 
+The deploy workflow now asks Ansible to do this automatically whenever the
+selected services include `backend` or `hosted`. If `/root/vault-init.json` still
+exists on the node, Ansible can use it for the first bootstrap. After that file
+is removed, set `VAULT_BOOTSTRAP_TOKEN` in the GitHub Environment if you want CI
+to keep managing missing app secrets and Vault roles.
+
+Manual fallback:
+
 ```bash
 export VAULT_ADDR=https://vault.bosman.top
 vault login -method=userpass username=bosman
@@ -276,6 +300,10 @@ Re-running the script never overwrites an existing path, so it cannot rotate a
 live database password out from under running pods.
 
 **3. PostgreSQL database and role.**
+
+Ansible also performs this automatically during application bootstrap, using the
+password stored at `secret/projects/moomento/production/backend`. Manual
+fallback:
 
 ```bash
 FLASHCARDS_DB_PASSWORD=$(vault kv get -field=SPRING_DATASOURCE_PASSWORD \
