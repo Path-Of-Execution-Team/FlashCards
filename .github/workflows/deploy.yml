@@ -74,8 +74,7 @@ jobs:
       environment: ${{ steps.target.outputs.environment }}
       ref: ${{ steps.target.outputs.ref }}
       requested_services: ${{ steps.target.outputs.requested_services }}
-      deploy_services: ${{ steps.scope.outputs.deploy_services }}
-      needs_vault: ${{ steps.scope.outputs.needs_vault }}
+      manual_deploy: ${{ steps.target.outputs.manual_deploy }}
       backend_tag: ${{ steps.tags.outputs.backend }}
       frontend_tag: ${{ steps.tags.outputs.frontend }}
       hosted_tag: ${{ steps.tags.outputs.hosted }}
@@ -207,18 +206,84 @@ jobs:
             echo "| hosted | \`$hosted\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # ---------------------------------------------------------------------------
+  # Chooses the actual deploy set. Manual runs use the operator's selection
+  # exactly. Automatic subproject dispatches deploy the changed service and, on
+  # a fresh or incomplete environment, any missing services whose branch images
+  # are already available in GHCR.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: Plan services
+    needs: resolve
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.environment }}
+    outputs:
+      deploy_services: ${{ steps.scope.outputs.deploy_services }}
+      needs_vault: ${{ steps.scope.outputs.needs_vault }}
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${SSH_PRIVATE_KEY:?repository secret SSH_PRIVATE_KEY is not set}"
+          : "${SSH_KNOWN_HOSTS:?repository variable SSH_KNOWN_HOSTS is not set}"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host target
+            HostName ${{ vars.SSH_HOST }}
+            User ${{ vars.SSH_USER }}
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - id: deployed
+        name: Discover already deployed services
+        env:
+          K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          deployed="$(
+            ssh target "
+              set -eu
+              if ! command -v kubectl >/dev/null 2>&1; then
+                exit 0
+              fi
+              for service in backend frontend hosted; do
+                if kubectl -n '$K8S_NAMESPACE' get deployment \"\$service\" >/dev/null 2>&1; then
+                  printf '%s ' \"\$service\"
+                fi
+              done
+            " 2>/dev/null || true
+          )"
+          deployed="$(printf '%s' "$deployed" | xargs)"
+          echo "deployed_services=$deployed" >> "$GITHUB_OUTPUT"
+          {
+            echo
+            echo "Already deployed services: \`${deployed:-none}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - id: scope
         name: Pick deployable services
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
-          REQUESTED_SERVICES: ${{ steps.target.outputs.requested_services }}
-          MANUAL_DEPLOY: ${{ steps.target.outputs.manual_deploy }}
+          REQUESTED_SERVICES: ${{ needs.resolve.outputs.requested_services }}
+          MANUAL_DEPLOY: ${{ needs.resolve.outputs.manual_deploy }}
+          DEPLOYED_SERVICES: ${{ steps.deployed.outputs.deployed_services }}
           DISPATCH_SERVICE: ${{ github.event.client_payload.service }}
-          BACKEND_TAG: ${{ steps.tags.outputs.backend }}
-          FRONTEND_TAG: ${{ steps.tags.outputs.frontend }}
-          HOSTED_TAG: ${{ steps.tags.outputs.hosted }}
+          BACKEND_TAG: ${{ needs.resolve.outputs.backend_tag }}
+          FRONTEND_TAG: ${{ needs.resolve.outputs.frontend_tag }}
+          HOSTED_TAG: ${{ needs.resolve.outputs.hosted_tag }}
         run: |
           set -euo pipefail
 
@@ -258,54 +323,77 @@ jobs:
             done
             return 1
           }
-          append_service() {
-            case " $selected " in
-              *" $1 "*) ;;
-              *) selected="${selected:+$selected }$1" ;;
-            esac
-          }
-          contains_service() {
-            case " $REQUESTED_SERVICES " in
-              *" $1 "*) return 0 ;;
+          contains() {
+            local haystack="$1" needle="$2"
+            case " $haystack " in
+              *" $needle "*) return 0 ;;
               *) return 1 ;;
             esac
           }
+          append_candidate() {
+            contains "$candidates" "$1" || candidates="${candidates:+$candidates }$1"
+          }
+          append_missing() {
+            contains "$missing_services" "$1" || missing_services="${missing_services:+$missing_services }$1"
+          }
+          append_selected() {
+            contains "$selected" "$1" || selected="${selected:+$selected }$1"
+          }
 
-          selected=""
+          candidates="$REQUESTED_SERVICES"
+          missing_services=""
+          for service in backend frontend hosted; do
+            if ! contains "$DEPLOYED_SERVICES" "$service"; then
+              append_missing "$service"
+            fi
+          done
+
           if [ "$MANUAL_DEPLOY" = "true" ]; then
-            selected="$REQUESTED_SERVICES"
             echo "Manual deploy: using requested services as-is." >> "$GITHUB_STEP_SUMMARY"
           else
+            for service in $missing_services; do
+              append_candidate "$service"
+            done
             {
               echo
-              echo "| service | image | deploy? |"
-              echo "|---|---|---|"
+              echo "Missing services considered for first deploy: \`${missing_services:-none}\`"
             } >> "$GITHUB_STEP_SUMMARY"
-            for service in backend frontend hosted; do
-              contains_service "$service" || continue
-              image="$(image_for "$service")"
-              tag="$(tag_for "$service")"
-
-              if image_exists "$image" "$tag"; then
-                append_service "$service"
-                verdict="yes"
-              elif [ "$service" = "$DISPATCH_SERVICE" ]; then
-                if image_exists_with_retry "$image" "$tag"; then
-                  append_service "$service"
-                  verdict="yes"
-                else
-                  echo "::error::Dispatched service $service image is not available in GHCR: $image:$tag"
-                  exit 1
-                fi
-              else
-                verdict="not yet"
-              fi
-              echo "| $service | \`$image:$tag\` | $verdict |" >> "$GITHUB_STEP_SUMMARY"
-            done
           fi
 
+          selected=""
+          {
+            echo
+            echo "| service | image | deploy? |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for service in backend frontend hosted; do
+            contains "$candidates" "$service" || continue
+            image="$(image_for "$service")"
+            tag="$(tag_for "$service")"
+
+            if image_exists "$image" "$tag"; then
+              append_selected "$service"
+              verdict="yes"
+            elif [ "$service" = "$DISPATCH_SERVICE" ]; then
+              if image_exists_with_retry "$image" "$tag"; then
+                append_selected "$service"
+                verdict="yes"
+              else
+                echo "::error::Dispatched service $service image is not available in GHCR: $image:$tag"
+                exit 1
+              fi
+            elif [ "$MANUAL_DEPLOY" = "true" ]; then
+              echo "::error::Requested service $service image is not available in GHCR: $image:$tag"
+              exit 1
+            else
+              verdict="not yet"
+            fi
+            echo "| $service | \`$image:$tag\` | $verdict |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
           [ -n "$selected" ] || {
-            echo "::error::None of the requested images exist in GHCR yet; nothing can be deployed."
+            echo "::error::None of the candidate images exist in GHCR yet; nothing can be deployed."
             exit 1
           }
 
@@ -332,14 +420,14 @@ jobs:
   # ---------------------------------------------------------------------------
   provision:
     name: Provision target infrastructure
-    needs: resolve
+    needs: [resolve, plan]
     uses: ./.github/workflows/provision.yml
     with:
       environment: ${{ needs.resolve.outputs.environment }}
       ref: ${{ needs.resolve.outputs.ref }}
       vault_bootstrap: false
-      vault_required_unsealed: ${{ needs.resolve.outputs.needs_vault == 'true' }}
-      app_bootstrap: ${{ needs.resolve.outputs.needs_vault == 'true' }}
+      vault_required_unsealed: ${{ needs.plan.outputs.needs_vault == 'true' }}
+      app_bootstrap: ${{ needs.plan.outputs.needs_vault == 'true' }}
       app_bootstrap_require_credentials: false
     secrets: inherit
 
@@ -350,7 +438,7 @@ jobs:
   # ---------------------------------------------------------------------------
   render:
     name: Render and validate manifests
-    needs: [resolve, provision]
+    needs: [resolve, plan, provision]
     runs-on: ubuntu-latest
     steps:
       # Same ref the tags were derived from, so the overlay and the image tags
@@ -386,7 +474,7 @@ jobs:
 
       - name: Select resources for the requested services
         env:
-          DEPLOY_SERVICES: ${{ needs.resolve.outputs.deploy_services }}
+          DEPLOY_SERVICES: ${{ needs.plan.outputs.deploy_services }}
         run: |
           set -euo pipefail
           python -m pip install --quiet pyyaml
@@ -493,7 +581,7 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy to ${{ needs.resolve.outputs.environment }}
-    needs: [resolve, render]
+    needs: [resolve, plan, render]
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve.outputs.environment }}
     steps:
@@ -533,7 +621,7 @@ jobs:
           ssh target 'kubectl version -o json >/dev/null && kubectl get nodes'
 
       - name: Check Vault is unsealed
-        if: needs.resolve.outputs.needs_vault == 'true'
+        if: needs.plan.outputs.needs_vault == 'true'
         run: |
           set -euo pipefail
           # Vault standalone comes back sealed after a reboot, and the pods would
@@ -598,7 +686,7 @@ jobs:
       - name: Wait for the rollout
         id: rollout
         env:
-          DEPLOY_SERVICES: ${{ needs.resolve.outputs.deploy_services }}
+          DEPLOY_SERVICES: ${{ needs.plan.outputs.deploy_services }}
         run: |
           set -euo pipefail
           for d in $DEPLOY_SERVICES; do
@@ -611,7 +699,7 @@ jobs:
       - name: Diagnostics and rollback on failure
         if: failure()
         env:
-          DEPLOY_SERVICES: ${{ needs.resolve.outputs.deploy_services }}
+          DEPLOY_SERVICES: ${{ needs.plan.outputs.deploy_services }}
         run: |
           set +e
           ns='${{ vars.K8S_NAMESPACE }}'
@@ -657,5 +745,5 @@ jobs:
             echo "- host: \`${{ vars.SSH_HOST }}\`"
             echo "- namespace: \`${{ vars.K8S_NAMESPACE }}\`"
             echo "- url: https://${{ vars.PUBLIC_HOST }}"
-            echo "- services: \`${{ needs.resolve.outputs.deploy_services }}\`"
+            echo "- services: \`${{ needs.plan.outputs.deploy_services }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

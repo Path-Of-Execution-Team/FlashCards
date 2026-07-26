@@ -142,21 +142,25 @@ deployed state provably matches the root commit:
 git ls-tree HEAD source/FlashCardsBackend | awk '{print $3}' | cut -c1-7
 ```
 
-A `repository_dispatch` from a subproject deploys only the service it names and
-overrides that service's tag. `workflow_dispatch` lets an operator choose both
-the target environment and a `source_ref` (branch, tag or SHA), and also accepts
-an override per service for manual rollbacks.
+A `repository_dispatch` from a subproject deploys the service it names and
+overrides that service's tag. It also checks the target namespace and, if any
+service is not deployed yet, adds that missing service from the environment
+branch (`develop` for develop, `main` for production) when its GHCR image is
+already available. `workflow_dispatch` lets an operator choose both the target
+environment and a `source_ref` (branch, tag or SHA), and also accepts an
+override per service for manual rollbacks.
 
 Before anything touches a server, `render` confirms every resolved tag actually
 exists in GHCR. A missing image fails the run with a clear message instead of an
 `ImagePullBackOff` twenty seconds later.
 
 Automatic root pushes request all services, then resolve the deployable subset
-from GHCR. A subproject push or PR deploys only that subproject through
-`repository_dispatch`. On a fresh environment this means the first published
-frontend image can deploy the frontend alone; when backend and hosted images
-appear, their own dispatches deploy them. Manual runs use the operator's
-`deploy_services` input exactly.
+from GHCR. A subproject push or PR requests that subproject through
+`repository_dispatch`, and first-deploy planning adds any currently missing
+services whose branch images exist. On a fresh environment this means a frontend
+dispatch can deploy the frontend plus the latest branch backend/hosted if those
+images already exist; if not, they are skipped until their images appear.
+Manual runs use the operator's `deploy_services` input exactly.
 
 Subproject pull requests into `develop` also publish preview images tagged as
 `pr-<number>-sha-<short-sha>` and dispatch a develop deploy for that one
