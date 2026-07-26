@@ -169,6 +169,12 @@ Subproject pull requests into `develop` also publish preview images tagged as
 service. Pull requests do not automatically deploy to production; production is
 updated after a push/merge to `main` or by an explicit manual deploy.
 
+Each subproject can also deploy itself manually. Run its **Build and publish
+image** workflow, choose the branch in the workflow UI or set `source_ref`, and
+choose `environment=develop` or `environment=production`. The workflow tests the
+selected ref, publishes `sha-<short-sha>`, and dispatches root `FlashCards`
+deploy for only that service.
+
 ### Repository configuration
 
 Set once, on `Path-Of-Execution-Team/FlashCards`:
