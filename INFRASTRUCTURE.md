@@ -193,6 +193,38 @@ secret/infrastructure/
     └── applications
 ```
 
+Operator credentials are rotated manually with:
+
+```bash
+scripts/manage-operator-credentials.sh scripts/operator-credentials.example.csv
+```
+
+The script treats Vault as the source of truth where possible and then
+synchronizes runtime Kubernetes objects from the same CSV values:
+
+- Vault userpass users: `secret/infrastructure/vault/users/<login>`
+- Kafka UI BasicAuth users: `secret/infrastructure/kafka-ui/users/<login>` and
+  `kafka/kafka-ui-basic-auth`
+- Grafana operator users: `secret/infrastructure/grafana/users/<login>`,
+  `secret/infrastructure/grafana/config`, `monitoring/grafana-admin-credentials`
+- pgAdmin operator users: `secret/infrastructure/pgadmin4/users/<login>`,
+  `secret/infrastructure/pgadmin4/config`, `database/pgadmin4-credentials`
+- PostgreSQL roles: `secret/infrastructure/postgresql/users/<role>` and the
+  live PostgreSQL role/database
+
+CSV headers:
+
+```csv
+login,email,vault_password,kafka_ui_password,grafana_password,pgadmin_password,postgres_user,postgres_password,postgres_database
+```
+
+Leave a password cell empty to skip that component. If `email` is empty, the
+script uses `login@bosman.top`, unless `login` is already an email address.
+Grafana and pgAdmin use the first matching row as the default/admin runtime
+credential. pgAdmin keeps users in its own persistent SQLite database, so the
+script updates Vault and runtime defaults; if the pgAdmin user already exists,
+verify the login in the UI after rotation.
+
 Recommended application hierarchy:
 
 ```text
