@@ -184,6 +184,58 @@ exist yet. Re-running the workflow does not rotate live secrets. PostgreSQL is
 then synced to the password stored in Vault, so a later admin rotation is:
 change the Vault backend password, then run provisioning/deploy again.
 
+`VAULT_BOOTSTRAP_TOKEN` can be a short-lived admin token for first bootstrap, or
+a scoped CI token. Example policy for both environments:
+
+```hcl
+path "sys/mounts" {
+  capabilities = ["read"]
+}
+
+path "sys/mounts/secret" {
+  capabilities = ["create", "read", "update", "sudo"]
+}
+
+path "sys/auth" {
+  capabilities = ["read"]
+}
+
+path "sys/auth/kubernetes" {
+  capabilities = ["create", "read", "update", "sudo"]
+}
+
+path "auth/kubernetes/config" {
+  capabilities = ["create", "read", "update"]
+}
+
+path "auth/kubernetes/role/moomento*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+path "sys/policies/acl/moomento*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+path "secret/data/projects/moomento/*" {
+  capabilities = ["create", "read", "update", "list"]
+}
+
+path "secret/metadata/projects/moomento/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+```
+
+Create the token and store it as an Environment secret:
+
+```bash
+vault policy write moomento-ci-bootstrap moomento-ci-bootstrap.hcl
+vault token create -policy=moomento-ci-bootstrap -period=720h -orphan
+
+gh secret set VAULT_BOOTSTRAP_TOKEN \
+  --repo Path-Of-Execution-Team/FlashCards \
+  --env production
+```
+
 Then one [GitHub Environment](https://github.com/Path-Of-Execution-Team/FlashCards/settings/environments)
 per target, each with four variables:
 
