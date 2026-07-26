@@ -10,8 +10,8 @@ name: Deploy
 # So the tag to deploy is derivable from the submodule pointer - no manual
 # version bookkeeping, and the deployed state always matches this commit.
 #
-# repository_dispatch (sent by a subproject after it publishes an image) and
-# workflow_dispatch can override individual tags.
+# repository_dispatch (sent by a subproject after it publishes an image or a PR
+# preview image) and workflow_dispatch can override individual tags.
 
 on:
   push:
@@ -99,6 +99,9 @@ jobs:
             repository_dispatch)
               env_name="${{ github.event.client_payload.environment }}"
               [ -n "$env_name" ] || env_name=develop
+              services="${{ github.event.client_payload.deploy_services }}"
+              [ -n "$services" ] || services="${{ github.event.client_payload.service }}"
+              [ -n "$services" ] || services=all
               # A repository_dispatch always runs against the default branch,
               # so github.ref_name is `main` no matter which environment the
               # payload names. Checking out `main` for a develop deploy would

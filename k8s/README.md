@@ -142,20 +142,26 @@ deployed state provably matches the root commit:
 git ls-tree HEAD source/FlashCardsBackend | awk '{print $3}' | cut -c1-7
 ```
 
-A `repository_dispatch` from a subproject overrides the one service it names and
-leaves the other two on their pinned tags. `workflow_dispatch` lets an operator
-choose both the target environment and a `source_ref` (branch, tag or SHA), and
-also accepts an override per service for manual rollbacks.
+A `repository_dispatch` from a subproject deploys only the service it names and
+overrides that service's tag. `workflow_dispatch` lets an operator choose both
+the target environment and a `source_ref` (branch, tag or SHA), and also accepts
+an override per service for manual rollbacks.
 
 Before anything touches a server, `render` confirms every resolved tag actually
 exists in GHCR. A missing image fails the run with a clear message instead of an
 `ImagePullBackOff` twenty seconds later.
 
-Automatic runs (`push` and `repository_dispatch`) request all services, then
-resolve the deployable subset from GHCR. On a fresh environment this means the
-first published frontend image can deploy the frontend alone; when backend and
-hosted images appear, the next automatic run includes them. Manual runs use the
-operator's `deploy_services` input exactly.
+Automatic root pushes request all services, then resolve the deployable subset
+from GHCR. A subproject push or PR deploys only that subproject through
+`repository_dispatch`. On a fresh environment this means the first published
+frontend image can deploy the frontend alone; when backend and hosted images
+appear, their own dispatches deploy them. Manual runs use the operator's
+`deploy_services` input exactly.
+
+Subproject pull requests into `develop` also publish preview images tagged as
+`pr-<number>-sha-<short-sha>` and dispatch a develop deploy for that one
+service. Pull requests do not automatically deploy to production; production is
+updated after a push/merge to `main` or by an explicit manual deploy.
 
 ### Repository configuration
 
