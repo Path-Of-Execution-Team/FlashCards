@@ -199,15 +199,18 @@ Operator credentials are rotated manually with:
 scripts/manage-operator-credentials.sh scripts/operator-credentials.example.csv
 ```
 
-The script treats Vault as the source of truth where possible and then
+The script treats Vault as the source of truth where possible. Every row with a
+non-empty password column creates or updates one account in that service, then
 synchronizes runtime Kubernetes objects from the same CSV values:
 
 - Vault userpass users: `secret/infrastructure/vault/users/<login>`
 - Kafka UI BasicAuth users: `secret/infrastructure/kafka-ui/users/<login>` and
   `kafka/kafka-ui-basic-auth`
 - Grafana operator users: `secret/infrastructure/grafana/users/<login>`,
+  Grafana API users with role `Admin` by default,
   `secret/infrastructure/grafana/config`, `monitoring/grafana-admin-credentials`
 - pgAdmin operator users: `secret/infrastructure/pgadmin4/users/<login>`,
+  pgAdmin internal users with role `Administrator` by default,
   `secret/infrastructure/pgadmin4/config`, `database/pgadmin4-credentials`
 - PostgreSQL roles: `secret/infrastructure/postgresql/users/<role>` and the
   live PostgreSQL role/database
@@ -218,12 +221,21 @@ CSV headers:
 login,email,vault_password,kafka_ui_password,grafana_password,pgadmin_password,postgres_user,postgres_password,postgres_database
 ```
 
-Leave a password cell empty to skip that component. If `email` is empty, the
-script uses `login@bosman.top`, unless `login` is already an email address.
-Grafana and pgAdmin use the first matching row as the default/admin runtime
-credential. pgAdmin keeps users in its own persistent SQLite database, so the
-script updates Vault and runtime defaults; if the pgAdmin user already exists,
-verify the login in the UI after rotation.
+Leave a password cell empty to skip that component for that row. If `email` is
+empty, the script uses `login@bosman.top`, unless `login` is already an email
+address. Kafka UI BasicAuth is rebuilt from the CSV rows that include a
+`kafka_ui_password`, so omitted Kafka users are removed from the BasicAuth
+secret. Grafana and pgAdmin still use the first matching row as the
+bootstrap/default admin secret, but all matching rows are created or updated in
+the application itself.
+
+Useful overrides:
+
+```bash
+GRAFANA_ORG_ROLE=Editor \
+PGADMIN_ADMIN=false PGADMIN_ROLE=User \
+scripts/manage-operator-credentials.sh credentials.csv
+```
 
 Recommended application hierarchy:
 
