@@ -220,6 +220,9 @@ jobs:
     outputs:
       deploy_services: ${{ steps.scope.outputs.deploy_services }}
       needs_vault: ${{ steps.scope.outputs.needs_vault }}
+      backend_tag: ${{ steps.scope.outputs.backend_tag }}
+      frontend_tag: ${{ steps.scope.outputs.frontend_tag }}
+      hosted_tag: ${{ steps.scope.outputs.hosted_tag }}
     steps:
       - name: Configure SSH
         env:
@@ -276,7 +279,9 @@ jobs:
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUBPROJECT_WORKFLOW_TOKEN: ${{ secrets.SUBPROJECT_WORKFLOW_TOKEN }}
           OWNER: ${{ github.repository_owner }}
+          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
           REQUESTED_SERVICES: ${{ needs.resolve.outputs.requested_services }}
           MANUAL_DEPLOY: ${{ needs.resolve.outputs.manual_deploy }}
           DEPLOYED_SERVICES: ${{ steps.deployed.outputs.deployed_services }}
@@ -288,6 +293,25 @@ jobs:
           set -euo pipefail
 
           owner_lc="${OWNER,,}"
+          backend_tag="$BACKEND_TAG"
+          frontend_tag="$FRONTEND_TAG"
+          hosted_tag="$HOSTED_TAG"
+
+          branch_for_environment() {
+            case "$ENVIRONMENT" in
+              production) printf 'main' ;;
+              develop)    printf 'develop' ;;
+              *) echo "::error::Unsupported environment for image build: $ENVIRONMENT"; exit 1 ;;
+            esac
+          }
+          repo_for() {
+            case "$1" in
+              backend)  printf '%s/FlashCardsBackend' "$OWNER" ;;
+              frontend) printf '%s/FlashCardsGUI' "$OWNER" ;;
+              hosted)   printf '%s/FlashCardsHostedServices' "$OWNER" ;;
+              *) return 1 ;;
+            esac
+          }
           image_for() {
             case "$1" in
               backend)  printf 'ghcr.io/%s/flashcards-backend' "$owner_lc" ;;
@@ -298,11 +322,34 @@ jobs:
           }
           tag_for() {
             case "$1" in
-              backend)  printf '%s' "$BACKEND_TAG" ;;
-              frontend) printf '%s' "$FRONTEND_TAG" ;;
-              hosted)   printf '%s' "$HOSTED_TAG" ;;
+              backend)  printf '%s' "$backend_tag" ;;
+              frontend) printf '%s' "$frontend_tag" ;;
+              hosted)   printf '%s' "$hosted_tag" ;;
               *) return 1 ;;
             esac
+          }
+          set_tag() {
+            case "$1" in
+              backend)  backend_tag="$2" ;;
+              frontend) frontend_tag="$2" ;;
+              hosted)   hosted_tag="$2" ;;
+              *) return 1 ;;
+            esac
+          }
+          require_subproject_token() {
+            if [ -z "$SUBPROJECT_WORKFLOW_TOKEN" ]; then
+              echo "::error::SUBPROJECT_WORKFLOW_TOKEN is required to build missing subproject images."
+              echo "::error::Create a fine-grained PAT for the three subproject repos with Actions: read/write and Contents: read."
+              exit 1
+            fi
+          }
+          branch_tag_for() {
+            local service="$1" repo branch sha
+            repo="$(repo_for "$service")"
+            branch="$(branch_for_environment)"
+            require_subproject_token
+            sha="$(GH_TOKEN="$SUBPROJECT_WORKFLOW_TOKEN" gh api "repos/${repo}/commits/${branch}" --jq .sha)"
+            printf 'sha-%s' "${sha:0:7}"
           }
           image_exists() {
             local image="$1" tag="$2" repo token code
@@ -322,6 +369,30 @@ jobs:
               sleep 5
             done
             return 1
+          }
+          ensure_branch_image() {
+            local service="$1" image="$2" tag="$3" repo branch
+            if image_exists "$image" "$tag"; then
+              return
+            fi
+
+            repo="$(repo_for "$service")"
+            branch="$(branch_for_environment)"
+            require_subproject_token
+            echo "Image $image:$tag is missing; triggering $repo docker-publish.yml on $branch."
+            GH_TOKEN="$SUBPROJECT_WORKFLOW_TOKEN" gh workflow run docker-publish.yml \
+              --repo "$repo" \
+              --ref "$branch"
+
+            for _ in $(seq 1 60); do
+              if image_exists "$image" "$tag"; then
+                return
+              fi
+              sleep 20
+            done
+
+            echo "::error::Timed out waiting for $image:$tag after triggering $repo docker-publish.yml"
+            exit 1
           }
           contains() {
             local haystack="$1" needle="$2"
@@ -370,6 +441,19 @@ jobs:
           for service in backend frontend hosted; do
             contains "$candidates" "$service" || continue
             image="$(image_for "$service")"
+
+            if [ "$MANUAL_DEPLOY" != "true" ] \
+              && contains "$missing_services" "$service" \
+              && [ "$service" != "$DISPATCH_SERVICE" ]; then
+              tag="$(branch_tag_for "$service")"
+              set_tag "$service" "$tag"
+              ensure_branch_image "$service" "$image" "$tag"
+              append_selected "$service"
+              verdict="yes, built if missing"
+              echo "| $service | \`$image:$tag\` | $verdict |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
             tag="$(tag_for "$service")"
 
             if image_exists "$image" "$tag"; then
@@ -405,12 +489,21 @@ jobs:
           {
             echo "deploy_services=$selected"
             echo "needs_vault=$needs_vault"
+            echo "backend_tag=$backend_tag"
+            echo "frontend_tag=$frontend_tag"
+            echo "hosted_tag=$hosted_tag"
           } >> "$GITHUB_OUTPUT"
 
           {
             echo
             echo "Deployable services: \`$selected\`"
             echo "Requires Vault unsealed: \`$needs_vault\`"
+            echo
+            echo "| final service | tag |"
+            echo "|---|---|"
+            echo "| backend | \`$backend_tag\` |"
+            echo "| frontend | \`$frontend_tag\` |"
+            echo "| hosted | \`$hosted_tag\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -462,9 +555,9 @@ jobs:
         run: |
           set -euo pipefail
           kustomize edit set image \
-            "flashcards-backend=*:${{ needs.resolve.outputs.backend_tag }}" \
-            "flashcards-frontend=*:${{ needs.resolve.outputs.frontend_tag }}" \
-            "flashcards-hosted=*:${{ needs.resolve.outputs.hosted_tag }}"
+            "flashcards-backend=*:${{ needs.plan.outputs.backend_tag }}" \
+            "flashcards-frontend=*:${{ needs.plan.outputs.frontend_tag }}" \
+            "flashcards-hosted=*:${{ needs.plan.outputs.hosted_tag }}"
 
       - name: Render
         run: |

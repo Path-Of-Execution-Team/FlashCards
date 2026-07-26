@@ -145,10 +145,11 @@ git ls-tree HEAD source/FlashCardsBackend | awk '{print $3}' | cut -c1-7
 A `repository_dispatch` from a subproject deploys the service it names and
 overrides that service's tag. It also checks the target namespace and, if any
 service is not deployed yet, adds that missing service from the environment
-branch (`develop` for develop, `main` for production) when its GHCR image is
-already available. `workflow_dispatch` lets an operator choose both the target
-environment and a `source_ref` (branch, tag or SHA), and also accepts an
-override per service for manual rollbacks.
+branch (`develop` for develop, `main` for production). If that branch image is
+not in GHCR yet, root deploy triggers that subproject's `docker-publish.yml`
+workflow and waits for the image tag to appear. `workflow_dispatch` lets an
+operator choose both the target environment and a `source_ref` (branch, tag or
+SHA), and also accepts an override per service for manual rollbacks.
 
 Before anything touches a server, `render` confirms every resolved tag actually
 exists in GHCR. A missing image fails the run with a clear message instead of an
@@ -157,10 +158,11 @@ exists in GHCR. A missing image fails the run with a clear message instead of an
 Automatic root pushes request all services, then resolve the deployable subset
 from GHCR. A subproject push or PR requests that subproject through
 `repository_dispatch`, and first-deploy planning adds any currently missing
-services whose branch images exist. On a fresh environment this means a frontend
-dispatch can deploy the frontend plus the latest branch backend/hosted if those
-images already exist; if not, they are skipped until their images appear.
-Manual runs use the operator's `deploy_services` input exactly.
+services from their environment branch. On a fresh environment this means a
+frontend dispatch can deploy the frontend plus the latest branch backend/hosted;
+if a missing service image does not exist yet, the root workflow triggers its
+subproject image build and waits for GHCR before deploying. Manual runs use the
+operator's `deploy_services` input exactly.
 
 Subproject pull requests into `develop` also publish preview images tagged as
 `pr-<number>-sha-<short-sha>` and dispatch a develop deploy for that one
@@ -175,6 +177,7 @@ Set once, on `Path-Of-Execution-Team/FlashCards`:
 |---|---|---|
 | secret | `SSH_PRIVATE_KEY` | deploy key accepted by both nodes |
 | secret | `GHCR_PULL_TOKEN` | classic PAT, `read:packages` only, owned by `GHCR_PULL_USER` |
+| secret | `SUBPROJECT_WORKFLOW_TOKEN` | fine-grained PAT scoped to the three subproject repos, `Actions: read and write`, `Contents: read`; lets root deploy build missing first-deploy images |
 | secret | `VAULT_BOOTSTRAP_TOKEN` | optional; lets Ansible create missing app Vault secrets/roles after `/root/vault-init.json` has been removed |
 | secret | `VAULT_UNSEAL_KEYS` | optional; newline- or comma-separated unseal keys for the pseudo auto-unseal CronJob |
 | secret | `VAULT_UNSEAL_KEY` | optional; single-key fallback for one-share environments |
@@ -704,8 +707,10 @@ destination. To rule it out quickly, comment `networkpolicies.yaml` out of
 the proper rule.
 
 **The deploy workflow says a tag is not in GHCR** — the subproject's
-`docker-publish.yml` has not finished, or it never ran because the push went to a
-branch other than `main`/`develop`.
+`docker-publish.yml` has not finished, failed, or never ran because the push
+went to a branch other than `main`/`develop`. During first-deploy planning the
+root workflow can trigger missing subproject image builds itself, but only when
+`SUBPROJECT_WORKFLOW_TOKEN` is set on the root repository.
 
 **A subproject build is green but nothing deployed** — check its `Trigger
 deployment` job. A missing `DEPLOY_DISPATCH_TOKEN` fails exactly there.

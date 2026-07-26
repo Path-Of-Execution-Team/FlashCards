@@ -7,7 +7,7 @@
 # reads, and installs the dispatch token in the three subproject repositories.
 #
 # SECRETS: nothing is hard-coded here and nothing is written to disk. The SSH key
-# is read from a file you name, the two tokens are read from a terminal prompt
+# is read from a file you name, the tokens are read from a terminal prompt
 # with echo off, and each value is piped to `gh secret set` on stdin so it never
 # appears in your shell history or in the process list.
 #
@@ -124,17 +124,18 @@ read_secret() {
   printf '%s' "$value"
 }
 
-# The two PATs cannot be minted through the API, so they have to be typed. When
+# The PATs cannot be minted through the API, so they have to be typed. When
 # this script runs without a terminal (CI, or an agent shell) the prompts are
 # skipped rather than silently reading EOF and storing an empty secret.
 if [ ! -t 0 ]; then
-  log "No terminal - skipping the two token prompts"
+  log "No terminal - skipping the token prompts"
   cat >&2 <<MSG
   Everything that can be set non-interactively is done. Run this script again
-  from a terminal, or set the two tokens individually:
+  from a terminal, or set the tokens individually:
 
     gh secret set GHCR_PULL_TOKEN --repo $ROOT_REPO
     gh variable set GHCR_PULL_USER --repo $ROOT_REPO --body <token-owner-login>
+    gh secret set SUBPROJECT_WORKFLOW_TOKEN --repo $ROOT_REPO
 $(printf '    gh secret set DEPLOY_DISPATCH_TOKEN --repo %s\n' "${SUB_REPOS[@]}")
 MSG
 else
@@ -147,6 +148,18 @@ else
 MSG
   ghcr_token=$(read_secret "  GHCR_PULL_TOKEN: ")
   printf '%s' "$ghcr_token" | gh secret set GHCR_PULL_TOKEN --repo "$ROOT_REPO"
+  echo "  set on $ROOT_REPO"
+
+  log "Subproject workflow token"
+  cat >&2 <<MSG
+  A fine-grained PAT scoped to the three subproject repositories with
+  "Actions: read and write" and "Contents: read". The root Deploy workflow uses
+  it only when a first deploy needs to build a missing image by running that
+  subproject's docker-publish.yml workflow.
+  Create at: https://github.com/settings/personal-access-tokens/new
+MSG
+  subproject_workflow_token=$(read_secret "  SUBPROJECT_WORKFLOW_TOKEN: ")
+  printf '%s' "$subproject_workflow_token" | gh secret set SUBPROJECT_WORKFLOW_TOKEN --repo "$ROOT_REPO"
   echo "  set on $ROOT_REPO"
 
   log "Deploy dispatch token"
@@ -163,7 +176,7 @@ MSG
     echo "  set on $repo"
   done
 
-  unset ghcr_token dispatch_token
+  unset ghcr_token subproject_workflow_token dispatch_token
 fi
 
 # -----------------------------------------------------------------------------
