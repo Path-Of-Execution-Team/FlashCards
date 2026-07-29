@@ -1,0 +1,15 @@
+apiVersion: 1
+
+# Anything dropped into docker/grafana/dashboards/ as a .json file is picked up
+# within 10s - no Grafana restart, no import through the UI. `foldersFromFilesStructure`
+# turns subdirectories into Grafana folders.
+providers:
+  - name: FlashCards
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true

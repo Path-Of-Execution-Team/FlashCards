@@ -1,0 +1,44 @@
+# Local scrape config, mounted read-only into the prometheus container.
+#
+# In the cluster this job list does not exist: Prometheus discovers the apps
+# through the ServiceMonitors in k8s/components/monitoring/. The metric paths
+# below are the same ones those ServiceMonitors use, so a query written against
+# this stack keeps working against Grafana in production.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: flashcards-compose
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # next.config.ts rewrites /metrics to the /api/metrics route handler.
+  - job_name: "flashcards-frontend"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["frontend:3000"]
+
+  - job_name: "flashcards-backend"
+    metrics_path: "/actuator/prometheus"
+    static_configs:
+      - targets: ["backend:8080"]
+
+  - job_name: "flashcards-hosted"
+    metrics_path: "/actuator/prometheus"
+    static_configs:
+      - targets: ["hosted:8081"]
+
+  # Stack-local only - useful when logs stop showing up in Grafana and you need
+  # to tell "nothing was logged" from "the shipper is dropping lines".
+  - job_name: "loki"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: "alloy"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["alloy:12345"]

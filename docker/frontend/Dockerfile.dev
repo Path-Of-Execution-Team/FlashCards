@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.7
+# -----------------------------------------------------------------------------
+# Development image for FlashCardsGUI.
+#
+# Production uses source/FlashCardsGUI/Dockerfile, which produces a standalone
+# Next.js bundle on a slim runtime. This one runs `next dev` so that Fast Refresh
+# handles the files `docker compose watch` syncs in - no restart, no rebuild.
+#
+# node_modules lives in the image, never in a volume: a named volume would be
+# populated once from the image and then never refresh, so a package.json change
+# would silently keep the old tree. package.json / package-lock.json are
+# `rebuild` triggers in the watch config instead.
+# -----------------------------------------------------------------------------
+FROM node:22.22-alpine3.22
+
+WORKDIR /app
+
+ENV NODE_ENV=development \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# --ignore-scripts skips husky's `prepare` (git hooks are meaningless here) and
+# cypress' postinstall, which would otherwise pull ~200MB of browser binary that
+# this container never runs.
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npx", "next", "dev", "--hostname", "0.0.0.0", "--port", "3000"]

@@ -1,0 +1,2 @@
+# Drop exported Grafana dashboard .json files here; the provisioning config in
+# ../provisioning/dashboards/dashboards.yaml loads them automatically.

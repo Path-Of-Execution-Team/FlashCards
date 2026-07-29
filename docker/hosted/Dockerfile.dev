@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+# -----------------------------------------------------------------------------
+# Development image for FlashCardsHostedServices.
+#
+# Same shape and same reasoning as docker/backend/Dockerfile.dev - see the
+# comments there. The only differences are the port and that this service is a
+# Kafka consumer + mail sender rather than an HTTP API.
+# -----------------------------------------------------------------------------
+FROM maven:3.9.11-eclipse-temurin-17
+
+WORKDIR /app
+
+ENV TMPDIR=/tmp \
+    SERVER_PORT=8081 \
+    SPRING_DOCKER_COMPOSE_ENABLED=false
+
+COPY pom.xml ./
+RUN mvn -B -ntp -DskipTests dependency:go-offline
+
+COPY src ./src
+RUN mvn -B -ntp -DskipTests compile
+
+EXPOSE 8081
+
+CMD ["mvn", "-B", "-ntp", "spring-boot:run"]

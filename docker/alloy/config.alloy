@@ -1,0 +1,66 @@
+// Grafana Alloy - collects container stdout and ships it to Loki.
+//
+// The cluster uses Alloy for exactly this (INFRASTRUCTURE.md section 6), so the
+// label set below is deliberately the same one Alloy applies there: app,
+// service_name, namespace, cluster. A LogQL query written locally, e.g.
+//
+//   {cluster="flashcards-compose", app="backend"} | json | level="ERROR"
+//
+// differs from the production query only in the cluster value.
+//
+// Replaces the promtail config that the old compose setup carried inside the
+// backend submodule; promtail reached end of life in 2026.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Docker reports names as "/flashcards-backend-1".
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // The compose project name stands in for the Kubernetes namespace.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "namespace"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service_name"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "app"
+  }
+
+  rule {
+    target_label = "cluster"
+    replacement  = "flashcards-compose"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1.7
+# -----------------------------------------------------------------------------
+# Development image for FlashCardsBackend.
+#
+# This is NOT the image that ships. Production uses the multi-stage
+# source/FlashCardsBackend/Dockerfile, which builds a layered jar and runs it on
+# a JRE as uid 10001 with a read-only root filesystem. Here the JDK and Maven
+# stay in the final image on purpose: `docker compose watch` syncs ./src into
+# the container and restarts it, and the restart has to be able to recompile.
+#
+# The build context is source/FlashCardsBackend (see docker-compose.yml), so the
+# submodule's own .dockerignore applies and `target/` never enters the context.
+# -----------------------------------------------------------------------------
+FROM maven:3.9.11-eclipse-temurin-17
+
+WORKDIR /app
+
+ENV TMPDIR=/tmp \
+    SERVER_PORT=8080 \
+    # spring-boot-docker-compose is on the runtime classpath. Without this it
+    # would look for a compose file next to the app and manage its own
+    # containers - which is exactly what the stack around it already does.
+    SPRING_DOCKER_COMPOSE_ENABLED=false
+
+# Dependencies resolve into the image's own ~/.m2 in their own layer. Deliberately
+# not a named volume: a volume would shadow this directory and make the layer
+# pointless, and it would go stale the moment pom.xml changed. `pom.xml` is a
+# `rebuild` trigger in the watch config, so a dependency change re-runs this.
+COPY pom.xml ./
+RUN mvn -B -ntp -DskipTests dependency:go-offline
+
+# Pre-compiling means the first `docker compose up` starts in seconds instead of
+# waiting for a cold javac run. Sources synced later are recompiled incrementally
+# against these classes.
+COPY src ./src
+RUN mvn -B -ntp -DskipTests compile
+
+EXPOSE 8080
+
+# spring-boot:run keeps spring-boot-devtools active, so a plain recompile is
+# enough for the app to pick changes up without a full container restart.
+CMD ["mvn", "-B", "-ntp", "spring-boot:run"]
